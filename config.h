@@ -22,7 +22,6 @@ const int   daylightOffset_sec = 3600;
 // --- Optik ---
 #define GAMMA_VALUE 2.5  // Höherer Wert = dunklere Mitteltöne, 1.0 = Linear
 
-enum AppMode { WORDCLOCK, SENSORS, OFF };
 
 // Diese Variablen werden in Matrix_OS.ino definiert
 extern AppMode currentApp;

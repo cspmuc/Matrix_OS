@@ -1,6 +1,7 @@
 #pragma once
 #include <Adafruit_Protomatter.h>
 #include "config.h"
+#include <Arduino.h>
 
 enum AppType { WORDCLOCK, SENSORS, OFF };
 extern Adafruit_Protomatter matrix;

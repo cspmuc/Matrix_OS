@@ -58,8 +58,7 @@ void setup() {
 void loop() {
   networkLoop();
   
-  // Nutzt den berechneten Wert aus der Tabelle
-  matrix.setBrightness(gammaTable[brightness]);
+
 
   static unsigned long lastFrame = 0;
   if (millis() - lastFrame > 100) {
