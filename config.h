@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "secrets.h"
 
 // --- WLAN & MQTT ---
 const char* ssid     = "FBSTA";
