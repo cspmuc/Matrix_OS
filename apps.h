@@ -2,7 +2,13 @@
 #include <Adafruit_Protomatter.h>
 #include "config.h"
 
+enum AppType { WORDCLOCK, SENSORS, OFF };
 extern Adafruit_Protomatter matrix;
+
+// Hilfsfunktion für Farben ohne manuelle Dimmung
+uint16_t matrixColor(uint8_t r, uint8_t g, uint8_t b) {
+    return matrix.color565(r, g, b);
+}
 
 // Hilfsfunktion zum Dimmen der Farben
 uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b) {
@@ -15,15 +21,16 @@ uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b) {
 void drawWordClock() {
   struct tm ti;
   if(!getLocalTime(&ti)) return;
-  int h = ti.tm_hour;
-  int m = ti.tm_min;
+int h = ti.tm_hour;
+    int m = ti.tm_min;
+    matrix.fillScreen(0);
   
-  // Eckpunkte (Gedimmt)
-  uint16_t dotCol = dimColor(100, 100, 100); 
-  if (m % 5 >= 1) matrix.drawPixel(0, 0, dotCol);                         
-  if (m % 5 >= 2) matrix.drawPixel(M_WIDTH - 1, 0, dotCol);               
-  if (m % 5 >= 3) matrix.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, dotCol);    
-  if (m % 5 >= 4) matrix.drawPixel(0, M_HEIGHT - 1, dotCol);              
+    // Eckpunkte jetzt in voller Farbstärke
+    uint16_t dot = matrixColor(150, 150, 150); 
+    if (m % 5 >= 1) matrix.drawPixel(0, 0, dot);
+    if (m % 5 >= 2) matrix.drawPixel(63, 0, dot);
+    if (m % 5 >= 3) matrix.drawPixel(63, 63, dot);
+    if (m % 5 >= 4) matrix.drawPixel(0, 63, dot);
 
   int s = h % 12;
   int nextS = (s + 1) % 12;
@@ -44,12 +51,9 @@ void drawWordClock() {
   else if (mR == 55) { z1 = "Fuenf vor"; z2 = stundenNamen[nextS]; }
 
   matrix.setTextSize(1);
-  matrix.setTextColor(dimColor(255, 120, 0)); // Bernstein gedimmt
-  
-  matrix.setCursor(4, 14); matrix.print("Es ist");
-  int xPos1 = (z1.length() > 10) ? 0 : 4; 
-  matrix.setCursor(xPos1, 26); matrix.print(z1);
-  matrix.setCursor(4, 38); matrix.print(z2);
+  matrix.setTextColor(matrixColor(255, 100, 0)); // Bernstein (Full Power)
+  matrix.setCursor(4, 22); matrix.print(z1);
+  matrix.setCursor(4, 34); matrix.print(z2);
 }
 
 void drawSensors() {

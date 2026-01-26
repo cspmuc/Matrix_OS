@@ -4,11 +4,14 @@
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include "config.h"
+#include <math.h> // Für die pow() Funktion nötig
 
 // --- Hardware-Pins ---
 uint8_t rgbPins[]  = {42, 41, 40, 38, 39, 37};
 uint8_t addrPins[] = {45, 36, 48, 35, 21};
 uint8_t clockPin = 2, latchPin = 47, oePin = 14;
+
+uint8_t gammaTable[256]; // Speicherplatz für die berechneten Werte
 
 Adafruit_Protomatter matrix(M_WIDTH, 4, 1, rgbPins, 5, addrPins, clockPin, latchPin, oePin, true);
 
@@ -39,20 +42,24 @@ void status(String msg, uint16_t color) {
 }
 
 void setup() {
-  Serial.begin(115200);
-  if (matrix.begin() != PROTOMATTER_OK) for(;;);
-  matrix.fillScreen(0);
-  matrix.setTextSize(1);
-  
-  status("BOOTING...", matrix.color565(0, 255, 255));
-  initNetwork();
-  
-  delay(1500);
-  matrix.fillScreen(0);
+    Serial.begin(115200);
+
+    // Gamma-Tabelle einmalig berechnen
+    for (int i = 0; i < 256; i++) {
+        gammaTable[i] = (uint8_t)(pow((float)i / 255.0, GAMMA_VALUE) * 255.0 + 0.5);
+    }
+
+    if (matrix.begin() != PROTOMATTER_OK) {
+        for(;;);
+    }
+    initNetwork();
 }
 
 void loop() {
   networkLoop();
+  
+  // Nutzt den berechneten Wert aus der Tabelle
+  matrix.setBrightness(gammaTable[brightness]);
 
   static unsigned long lastFrame = 0;
   if (millis() - lastFrame > 100) {

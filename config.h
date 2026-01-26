@@ -19,6 +19,8 @@ const int   daylightOffset_sec = 3600;
 // --- DISPLAY ---
 #define M_WIDTH  64   
 #define M_HEIGHT 64
+// --- Optik ---
+#define GAMMA_VALUE 2.5  // Höherer Wert = dunklere Mitteltöne, 1.0 = Linear
 
 enum AppMode { WORDCLOCK, SENSORS, OFF };
 
