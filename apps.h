@@ -4,17 +4,14 @@
 
 extern Adafruit_Protomatter matrix;
 
-// Die Funktion erwartet nun 4 Argumente (r, g, b, bright)
+// Hilfsfunktion zum Dimmen mit Hardware-Boden (565-Format)
 uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
   if (bright == 0) return 0;
   uint8_t gBright = gammaTable[bright];
-  
-  // Kaufmännische Rundung (+127) schützt kleine Werte vor dem "Absaufen" auf 0
   uint8_t rd = ( (uint32_t)r * gBright + 127 ) / 255;
   uint8_t gd = ( (uint32_t)g * gBright + 127 ) / 255;
   uint8_t bd = ( (uint32_t)b * gBright + 127 ) / 255;
 
-  // Sichtbarkeits-Boden für das Hardware-Format (565)
   if (gBright > 0) {
     if (r > 0 && rd < 8) rd = 8; 
     if (g > 0 && gd < 4) gd = 4;
@@ -23,40 +20,83 @@ uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
   return matrix.color565(rd, gd, bd);
 }
 
+// Hilfsfunktion für zentrierten Text mit Zufalls-Versatz
+void centerPrint(String text, int y, int jitterMax) {
+  if (text == "") return;
+  
+  int16_t x1, y1;
+  uint16_t w, h;
+  matrix.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+  
+  // Grund-Zentrierung
+  int x = (M_WIDTH - w) / 2;
+  
+  // Jitter: +1, 0, -1 Zeichenbreite (ca. 6 Pixel), falls Platz vorhanden
+  if (jitterMax > 0 && (M_WIDTH - w) > 12) {
+    int shift = (rand() % 3 - 1) * 6; // -6, 0, oder 6 Pixel
+    // Sicherstellen, dass Text nicht aus dem Bild geschoben wird
+    if (x + shift >= 0 && x + w + shift <= M_WIDTH) {
+      x += shift;
+    }
+  }
+  
+  matrix.setCursor(x, y);
+  matrix.print(text);
+}
+
 void drawWordClock() {
   struct tm ti;
   if(!getLocalTime(&ti)) return;
   int h = ti.tm_hour;
   int m = ti.tm_min;
-  
-  matrix.fillScreen(0);
-  // Hier war es schon korrekt: 4 Argumente
-  uint16_t dotCol = dimColor(255, 255, 255, brightness);
-  if (m % 5 >= 1) matrix.drawPixel(0, 0, dotCol);                         
-  if (m % 5 >= 2) matrix.drawPixel(M_WIDTH - 1, 0, dotCol);               
-  if (m % 5 >= 3) matrix.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, dotCol);    
-  if (m % 5 >= 4) matrix.drawPixel(0, M_HEIGHT - 1, dotCol);              
-
+  int mR = (m / 5) * 5; 
   int s = h % 12;
   int nextS = (s + 1) % 12;
-  int mR = (m / 5) * 5; 
-  String z1 = "", z2 = "";
 
-  if (mR == 0) { z1 = (s == 1) ? "Ein" : stundenNamen[s]; z2 = "Uhr"; } 
-  else if (mR == 15) { z1 = "Viertel nach"; z2 = stundenNamen[s]; }
-  else if (mR == 30) { z1 = "halb"; z2 = stundenNamen[nextS]; }
-  else if (mR == 45) { z1 = "Dreiviertel"; z2 = stundenNamen[nextS]; }
-  else if (mR < 15)  { z1 = String(mR) + " nach"; z2 = stundenNamen[s]; }
-  else if (mR < 30)  { z1 = String(30-mR) + " vor halb"; z2 = stundenNamen[nextS]; }
-  else if (mR < 45)  { z1 = String(mR-30) + " nach halb"; z2 = stundenNamen[nextS]; }
-  else { z1 = String(60-mR) + " vor"; z2 = stundenNamen[nextS]; }
+  matrix.fillScreen(0);
+
+  // 1. Eckpunkte (Minuten-Dots)
+  uint16_t dotCol = dimColor(255, 255, 255, brightness);
+  if (m % 5 >= 1) matrix.drawPixel(0, 0, dotCol);
+  if (m % 5 >= 2) matrix.drawPixel(M_WIDTH - 1, 0, dotCol);
+  if (m % 5 >= 3) matrix.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, dotCol);
+  if (m % 5 >= 4) matrix.drawPixel(0, M_HEIGHT - 1, dotCol);
+
+  // 2. Zeit-Logik ohne Umlaute
+  String z0 = "Es ist", z1 = "", z2 = "", z3 = "";
+  
+  // Lokale Kopie der Stunden ohne Umlaute für diese Anzeige
+  String stunden[] = {"Zwoelf", "Eins", "Zwei", "Drei", "Vier", "Fuenf", "Sechs", "Sieben", "Acht", "Neun", "Zehn", "Elf"};
+
+  if (mR == 0)      { z1 = "Punkt"; z2 = (s == 1) ? "Eins" : stunden[s]; z3 = "Uhr"; }
+  else if (mR == 5)  { z1 = "fuenf"; z2 = "nach"; z3 = stunden[s]; }
+  else if (mR == 10) { z1 = "zehn"; z2 = "nach"; z3 = stunden[s]; }
+  else if (mR == 15) { z1 = "Viertel"; z2 = "nach"; z3 = stunden[s]; }
+  else if (mR == 20) { z1 = "zwanzig"; z2 = "nach"; z3 = stunden[s]; }
+  else if (mR == 25) { z1 = "fuenf vor"; z2 = "halb"; z3 = stunden[nextS]; }
+  else if (mR == 30) { z1 = "halb"; z2 = stunden[nextS]; }
+  else if (mR == 35) { z1 = "fuenf nach"; z2 = "halb"; z3 = stunden[nextS]; }
+  else if (mR == 40) { z1 = "zwanzig"; z2 = "vor"; z3 = stunden[nextS]; }
+  else if (mR == 45) { z1 = "Drei"; z2 = "viertel"; z3 = stunden[nextS]; } // "Dreiviertel" Trennung
+  else if (mR == 50) { z1 = "zehn"; z2 = "vor"; z3 = stunden[nextS]; }
+  else if (mR == 55) { z1 = "fuenf"; z2 = "vor"; z3 = stunden[nextS]; }
+
+  // 3. Jitter-Seed (alle 5 Minuten neu)
+  srand(h * 60 + mR);
+  int globalYOffset = (rand() % 5) - 2; // Gesamtes Bild rutscht +/- 2 Pixel hoch/runter
 
   matrix.setTextSize(1);
-  // KORREKTUR: Hier fehlte das vierte Argument "brightness"
-  matrix.setTextColor(dimColor(255, 120, 0, brightness)); 
-  matrix.setCursor(4, 22); matrix.print(z1);
-  matrix.setCursor(4, 34); matrix.print(z2);
+  matrix.setTextColor(dimColor(255, 120, 0, brightness));
+
+  // 4. Zentrierte Ausgabe mit Zeilenabstand 12
+  int y = 10 + globalYOffset;
+  centerPrint(z0, y, 1); 
+  if (z1 != "") centerPrint(z1, y + 12, 1);
+  if (z2 != "") centerPrint(z2, y + 24, 1);
+  if (z3 != "") centerPrint(z3, y + 36, 1);
 }
+
+// drawSensors und drawOverlay wie gehabt...
 
 void drawSensors() {
   matrix.fillScreen(0);
