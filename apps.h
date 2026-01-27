@@ -4,13 +4,24 @@
 
 extern Adafruit_Protomatter matrix;
 
-// Gamma-korrigierte Dimm-Funktion
 uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b) {
-  uint8_t gBright = gammaTable[brightness]; // Nutzt die berechnete Tabelle
-  uint8_t r_dim = (r * gBright) / 255;
-  uint8_t g_dim = (g * gBright) / 255;
-  uint8_t b_dim = (b * gBright) / 255;
-  return matrix.color565(r_dim, g_dim, b_dim);
+  if (brightness == 0) return 0;
+  uint8_t gBright = gammaTable[brightness];
+  
+  // 1. Kaufmännische Rundung statt Abschneiden
+  uint8_t rd = ( (uint32_t)r * gBright + 127 ) / 255;
+  uint8_t gd = ( (uint32_t)g * gBright + 127 ) / 255;
+  uint8_t bd = ( (uint32_t)b * gBright + 127 ) / 255;
+
+  // 2. Sichtbarkeits-Boden für das 565-Format (R,B >= 8, G >= 4)
+  // Dies verhindert, dass Farben bei niedriger Helligkeit schwarz werden oder kippen.
+  if (gBright > 0) {
+    if (r > 0 && rd < 8) rd = 8; 
+    if (g > 0 && gd < 4) gd = 4;
+    if (b > 0 && bd < 8) bd = 8;
+  }
+
+  return matrix.color565(rd, gd, bd);
 }
 
 void drawWordClock() {

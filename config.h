@@ -19,7 +19,7 @@ const int   daylightOffset_sec = 3600;
 // --- DISPLAY & OPTIK ---
 #define M_WIDTH  64   
 #define M_HEIGHT 64
-#define GAMMA_VALUE 2.8
+#define GAMMA_VALUE 2.0
 
 // 1. Definition des Typs (Nur hier!)
 enum AppMode { WORDCLOCK, SENSORS, OFF };
