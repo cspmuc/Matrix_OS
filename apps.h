@@ -74,3 +74,29 @@ void drawOverlay() {
   matrix.setTextColor(dimColor(255, 255, 255, brightness));
   matrix.print(overlayMsg);
 }
+
+void drawTestPattern() {
+  matrix.fillScreen(0);
+  // 8 Reihen für Farben, 8 Spalten für Helligkeit
+  for (int row = 0; row < 8; row++) {
+    for (int col = 0; col < 8; col++) {
+      // Helligkeitsstufen: 31, 63, 95, 127, 159, 191, 223, 255
+      uint8_t lvl = (col + 1) * 32 - 1; 
+      uint8_t r = 0, g = 0, b = 0;
+
+      switch (row) {
+        case 0: r = lvl; break;                         // Rot
+        case 1: g = lvl; break;                         // Grün
+        case 2: b = lvl; break;                         // Blau
+        case 3: r = g = b = lvl; break;                 // Weiß
+        case 4: r = lvl; g = lvl; break;                // Gelb
+        case 5: g = lvl; b = lvl; break;                // Cyan
+        case 6: r = lvl; b = lvl; break;                // Magenta
+        case 7: r = lvl; g = (lvl * 120) / 255; break;  // Bernstein (unser Sorgenkind)
+      }
+      
+      // Zeichne 8x8 Pixel große Blöcke
+      matrix.fillRect(col * 8, row * 8, 8, 8, dimColor(r, g, b, brightness));
+    }
+  }
+}

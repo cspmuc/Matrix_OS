@@ -21,8 +21,8 @@ const int   daylightOffset_sec = 3600;
 #define M_HEIGHT 64
 #define GAMMA_VALUE 2.2
 
-// 1. Definition des Typs (Nur hier!)
-enum AppMode { WORDCLOCK, SENSORS, OFF };
+// TESTPATTERN hinzugefügt
+enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, OFF };
 
 // 2. Bekanntgabe der Variablen (extern = "existiert woanders")
 extern AppMode currentApp;

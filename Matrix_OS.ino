@@ -66,9 +66,10 @@ void loop() {
   if (millis() - lastFrame > 100) {
     if (brightness > 0 && currentApp != OFF) {
       switch(currentApp) {
-        case WORDCLOCK: drawWordClock(); break;
-        case SENSORS:   drawSensors();   break;
-        case OFF:       matrix.fillScreen(0); break;
+        case WORDCLOCK:   drawWordClock();   break;
+        case SENSORS:     drawSensors();     break;
+        case TESTPATTERN: drawTestPattern(); break; // NEU
+        case OFF:         matrix.fillScreen(0); break;
       }
       if(overlayActive) drawOverlay();
     } else {
