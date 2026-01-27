@@ -23,10 +23,12 @@ void publishState() {
     // 2. Die Helligkeit als nackte Zahl (0-255)
     client.publish("matrix/status/brightness", String(brightness).c_str(), true);
 
-    // Status-Meldung erweitern
-    String appStr = "wordclock";
-    if (currentApp == SENSORS) appStr = "sensors";
+    // Status-Meldung der App korrigieren
+    String appStr = "off";
+    if (currentApp == WORDCLOCK) appStr = "wordclock";
+    else if (currentApp == SENSORS) appStr = "sensors";
     else if (currentApp == TESTPATTERN) appStr = "testpattern";
+    
     client.publish("matrix/status/app", appStr.c_str(), true);
 }
 
@@ -62,11 +64,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         DeserializationError error = deserializeJson(doc, payload, length);
         if (!error && doc.containsKey("app")) {
             String newApp = doc["app"];
-            // App-Wahl erweitern
+            // App-Wahl setzen
             if (newApp == "wordclock") currentApp = WORDCLOCK;
             else if (newApp == "sensors") currentApp = SENSORS;
-            else if (newApp == "testpattern") currentApp = TESTPATTERN; // NEU
+            else if (newApp == "testpattern") currentApp = TESTPATTERN;
             else if (newApp == "off") currentApp = OFF;
+
+            // WICHTIG: Status sofort zurückmelden!
+            publishState(); 
         }
     }
 }
