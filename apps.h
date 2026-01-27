@@ -55,13 +55,20 @@ void drawWordClock() {
 
   matrix.fillScreen(0);
 
-  // 1. Eckpunkte (Minuten-Dots)
+  // 1. Eckpunkte (Minuten-Dots) als 2x2 Quadrate
   uint16_t dotCol = dimColor(255, 255, 255, brightness);
-  if (m % 5 >= 1) matrix.drawPixel(0, 0, dotCol);
-  if (m % 5 >= 2) matrix.drawPixel(M_WIDTH - 1, 0, dotCol);
-  if (m % 5 >= 3) matrix.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, dotCol);
-  if (m % 5 >= 4) matrix.drawPixel(0, M_HEIGHT - 1, dotCol);
-
+  
+  // Oben Links (0,0 bis 1,1)
+  if (m % 5 >= 1) matrix.fillRect(0, 0, 2, 2, dotCol);
+  
+  // Oben Rechts (M_WIDTH-2, 0 bis M_WIDTH-1, 1)
+  if (m % 5 >= 2) matrix.fillRect(M_WIDTH - 2, 0, 2, 2, dotCol);
+  
+  // Unten Rechts (M_WIDTH-2, M_HEIGHT-2 bis M_WIDTH-1, M_HEIGHT-1)
+  if (m % 5 >= 3) matrix.fillRect(M_WIDTH - 2, M_HEIGHT - 2, 2, 2, dotCol);
+  
+  // Unten Links (0, M_HEIGHT-2 bis 1, M_HEIGHT-1)
+  if (m % 5 >= 4) matrix.fillRect(0, M_HEIGHT - 2, 2, 2, dotCol);
   // 2. Zeit-Logik ohne Umlaute
   String z0 = "Es ist", z1 = "", z2 = "", z3 = "";
   
