@@ -84,7 +84,7 @@ void drawWordClock() {
   else if (mR == 30) { z1 = "halb"; z2 = stunden[nextS]; }
   else if (mR == 35) { z1 = "fuenf nach"; z2 = "halb"; z3 = stunden[nextS]; }
   else if (mR == 40) { z1 = "zwanzig"; z2 = "vor"; z3 = stunden[nextS]; }
-  else if (mR == 45) { z1 = "Drei"; z2 = "viertel"; z3 = stunden[nextS]; } // "Dreiviertel" Trennung
+  else if (mR == 45) { z1 = "Drei-"; z2 = "viertel"; z3 = stunden[nextS]; } // "Dreiviertel" Trennung
   else if (mR == 50) { z1 = "zehn"; z2 = "vor"; z3 = stunden[nextS]; }
   else if (mR == 55) { z1 = "fuenf"; z2 = "vor"; z3 = stunden[nextS]; }
 
