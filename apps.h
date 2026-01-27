@@ -4,23 +4,22 @@
 
 extern Adafruit_Protomatter matrix;
 
-uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b) {
-  if (brightness == 0) return 0;
-  uint8_t gBright = gammaTable[brightness];
+uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
+  if (bright == 0) return 0;
+  uint8_t gBright = gammaTable[bright];
   
-  // 1. Kaufmännische Rundung statt Abschneiden
+  // Kaufmännische Rundung (+127) schützt kleine Werte vor dem "Absaufen" auf 0
   uint8_t rd = ( (uint32_t)r * gBright + 127 ) / 255;
   uint8_t gd = ( (uint32_t)g * gBright + 127 ) / 255;
   uint8_t bd = ( (uint32_t)b * gBright + 127 ) / 255;
 
-  // 2. Sichtbarkeits-Boden für das 565-Format (R,B >= 8, G >= 4)
-  // Dies verhindert, dass Farben bei niedriger Helligkeit schwarz werden oder kippen.
+  // Sichtbarkeits-Boden für das Hardware-Format (565)
+  // Das verhindert, dass Farben kippen oder Pixel ausgehen
   if (gBright > 0) {
     if (r > 0 && rd < 8) rd = 8; 
     if (g > 0 && gd < 4) gd = 4;
     if (b > 0 && bd < 8) bd = 8;
   }
-
   return matrix.color565(rd, gd, bd);
 }
 
@@ -31,7 +30,8 @@ void drawWordClock() {
   int m = ti.tm_min;
   
   matrix.fillScreen(0);
-  uint16_t dotCol = dimColor(100, 100, 100); 
+  // Von 100 auf 255 anheben, damit sie beim Dimmen genug "mathematisches Fleisch" haben
+  uint16_t dotCol = dimColor(255, 255, 255, brightness);
   if (m % 5 >= 1) matrix.drawPixel(0, 0, dotCol);                         
   if (m % 5 >= 2) matrix.drawPixel(M_WIDTH - 1, 0, dotCol);               
   if (m % 5 >= 3) matrix.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, dotCol);    

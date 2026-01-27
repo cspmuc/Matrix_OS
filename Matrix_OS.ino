@@ -41,9 +41,14 @@ void status(String msg, uint16_t color) {
 void setup() {
   Serial.begin(115200);
   
-  // Gamma-Tabelle berechnen
-  for (int i = 0; i < 256; i++) {
-    gammaTable[i] = (uint8_t)(pow((float)i / 255.0, GAMMA_VALUE) * 255.0 + 0.5);
+for (int i = 0; i < 256; i++) {
+    if (i == 0) {
+      gammaTable[i] = 0;
+    } else {
+      // Offset von 12 sorgt dafür, dass die LEDs auch bei Slider 1% noch "zünden"
+      float scaled = pow((float)i / 255.0, GAMMA_VALUE);
+      gammaTable[i] = (uint8_t)(12 + scaled * (255.0 - 12) + 0.5);
+    }
   }
 
   if (matrix.begin() != PROTOMATTER_OK) for(;;);
