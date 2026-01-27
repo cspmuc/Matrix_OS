@@ -4,6 +4,7 @@
 
 extern Adafruit_Protomatter matrix;
 
+// Die Funktion erwartet nun 4 Argumente (r, g, b, bright)
 uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
   if (bright == 0) return 0;
   uint8_t gBright = gammaTable[bright];
@@ -14,7 +15,6 @@ uint16_t dimColor(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
   uint8_t bd = ( (uint32_t)b * gBright + 127 ) / 255;
 
   // Sichtbarkeits-Boden für das Hardware-Format (565)
-  // Das verhindert, dass Farben kippen oder Pixel ausgehen
   if (gBright > 0) {
     if (r > 0 && rd < 8) rd = 8; 
     if (g > 0 && gd < 4) gd = 4;
@@ -30,7 +30,7 @@ void drawWordClock() {
   int m = ti.tm_min;
   
   matrix.fillScreen(0);
-  // Von 100 auf 255 anheben, damit sie beim Dimmen genug "mathematisches Fleisch" haben
+  // Hier war es schon korrekt: 4 Argumente
   uint16_t dotCol = dimColor(255, 255, 255, brightness);
   if (m % 5 >= 1) matrix.drawPixel(0, 0, dotCol);                         
   if (m % 5 >= 2) matrix.drawPixel(M_WIDTH - 1, 0, dotCol);               
@@ -52,7 +52,8 @@ void drawWordClock() {
   else { z1 = String(60-mR) + " vor"; z2 = stundenNamen[nextS]; }
 
   matrix.setTextSize(1);
-  matrix.setTextColor(dimColor(255, 120, 0)); 
+  // KORREKTUR: Hier fehlte das vierte Argument "brightness"
+  matrix.setTextColor(dimColor(255, 120, 0, brightness)); 
   matrix.setCursor(4, 22); matrix.print(z1);
   matrix.setCursor(4, 34); matrix.print(z2);
 }
@@ -60,13 +61,16 @@ void drawWordClock() {
 void drawSensors() {
   matrix.fillScreen(0);
   matrix.setCursor(4, 25);
-  matrix.setTextColor(dimColor(0, 255, 0));
+  // KORREKTUR: Hier fehlte das vierte Argument "brightness"
+  matrix.setTextColor(dimColor(0, 255, 0, brightness));
   matrix.print("Temp: 22.5 C");
 }
 
 void drawOverlay() {
-  matrix.fillRect(0, 18, M_WIDTH, 28, dimColor(0, 0, 150));
+  // KORREKTUR: Hier fehlte das vierte Argument "brightness"
+  matrix.fillRect(0, 18, M_WIDTH, 28, dimColor(0, 0, 150, brightness));
   matrix.setCursor(4, 28);
-  matrix.setTextColor(dimColor(255, 255, 255));
+  // KORREKTUR: Hier fehlte das vierte Argument "brightness"
+  matrix.setTextColor(dimColor(255, 255, 255, brightness));
   matrix.print(overlayMsg);
 }
