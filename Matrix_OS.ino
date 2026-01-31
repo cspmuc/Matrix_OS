@@ -22,9 +22,6 @@ uint8_t clockPin = 2, latchPin = 47, oePin = 14;
 
 Adafruit_Protomatter matrix(M_WIDTH, 3, 1, rgbPins, 5, addrPins, clockPin, latchPin, oePin, true);
 
-unsigned long lastDrawTime = 0;
-const int targetFPS = 25; // 25 Bilder pro Sekunde reichen
-const int frameDelay = 1000 / targetFPS;
 WiFiClient espClient;
 PubSubClient client(espClient);
 
@@ -43,8 +40,7 @@ void status(String msg, uint16_t color) {
 
 void setup() {
   Serial.begin(115200);
-  setCpuFrequencyMhz(240); // Maximale CPU-Power erzwingen
-
+  
 for (int i = 0; i < 256; i++) {
     if (i == 0) {
       gammaTable[i] = 0;
