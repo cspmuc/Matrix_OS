@@ -20,7 +20,7 @@ uint8_t rgbPins[]  = {42, 41, 40, 38, 39, 37};
 uint8_t addrPins[] = {45, 36, 48, 35, 21};
 uint8_t clockPin = 2, latchPin = 47, oePin = 14;
 
-Adafruit_Protomatter matrix(M_WIDTH, 4, 1, rgbPins, 5, addrPins, clockPin, latchPin, oePin, true);
+Adafruit_Protomatter matrix(M_WIDTH, 3, 1, rgbPins, 5, addrPins, clockPin, latchPin, oePin, true);
 
 WiFiClient espClient;
 PubSubClient client(espClient);
