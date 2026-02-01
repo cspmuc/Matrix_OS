@@ -17,14 +17,12 @@ const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
 // --- DISPLAY & OPTIK ---
-#define M_WIDTH  64   
+#define M_WIDTH  128   
 #define M_HEIGHT 64
 #define GAMMA_VALUE 2.2
 
-// TESTPATTERN hinzugefügt
 enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, OFF };
 
-// 2. Bekanntgabe der Variablen (extern = "existiert woanders")
 extern AppMode currentApp;
 extern int brightness;
 extern uint8_t gammaTable[256];
