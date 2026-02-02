@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <atomic> // NEU: Für Thread-Sicherheit
 #include "secrets.h"
 
 // --- WLAN & MQTT ---
@@ -16,17 +17,33 @@ const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
-// --- DISPLAY & OPTIK ---
+// --- DISPLAY ---
 #define M_WIDTH  128   
 #define M_HEIGHT 64
-#define GAMMA_VALUE 2.2
+#define GAMMA_VALUE 2.2 
 
-enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, OFF };
+// Pin Definitionen (Standard ESP32-S3 Matrix Portal)
+#define R1_PIN 42
+#define G1_PIN 41
+#define B1_PIN 40
 
-extern AppMode currentApp;
-extern int brightness;
-extern uint8_t gammaTable[256];
-extern bool overlayActive;
-extern String overlayMsg;
-extern unsigned long overlayTimer;
-extern const char* stundenNamen[];
+#define R2_PIN 38
+#define G2_PIN 39
+#define B2_PIN 37
+
+#define A_PIN 45
+#define B_PIN 36
+#define C_PIN 48
+#define D_PIN 35
+#define E_PIN 21
+
+#define CLK_PIN 2
+#define LAT_PIN 47
+#define OE_PIN  14
+
+// App Definitionen
+enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, OFF };
+
+// WICHTIG: Externals müssen jetzt atomic sein
+extern std::atomic<AppMode> currentApp;
+extern std::atomic<int> brightness;
