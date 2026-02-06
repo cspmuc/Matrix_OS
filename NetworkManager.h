@@ -7,9 +7,8 @@
 #include "DisplayManager.h"
 #include "SensorApp.h" 
 
-// Externe Funktionen (in Matrix_OS.ino definiert)
+// Externe Funktionen
 extern void status(const String& msg, uint16_t color);
-// NEU: scrollSpeed Parameter hinzugefügt
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
 extern volatile bool otaActive;
 extern volatile int otaProgress;
@@ -38,7 +37,8 @@ private:
 
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
-        StaticJsonDocument<512> doc;
+        // Puffer erhöht auf 1024 Bytes für komplexe Sensor-Seiten
+        StaticJsonDocument<1024> doc;
         DeserializationError error = deserializeJson(doc, payload, length);
 
         if (error) {
@@ -52,11 +52,13 @@ private:
              return;
         }
 
+        // Helligkeit
         if (t == "matrix/cmd/brightness" && doc.containsKey("val")) {
             brightnessRef = doc["val"].as<int>();
             publishState();
         }
         
+        // App Switch
         if (t == "matrix/cmd/app" && doc.containsKey("app")) {
             String newApp = doc["app"];
             if (newApp == "wordclock") currentAppRef = WORDCLOCK;
@@ -68,12 +70,11 @@ private:
             publishState(); 
         }     
 
+        // Overlay / Notification
         if (t == "matrix/cmd/overlay") {
              String msg = doc["msg"] | "";
              int dur = doc["duration"] | 5;    
              String col = doc["color"] | "white";
-             
-             // NEU: Geschwindigkeit lesen (Default 30 Pixel/Sekunde)
              int speed = doc["speed"] | 30; 
              
              if (msg.length() > 0) {
@@ -81,11 +82,12 @@ private:
              }
         }
 
-        // --- NEU: Sensor Page Update ---
+        // --- SENSOR PAGE UPDATE (Das neue Dashboard) ---
+        // Altes "matrix/sensor" wurde entfernt, da inkompatibel!
         if (t == "matrix/cmd/sensor_page") {
             String id = doc["id"] | "default";
             String title = doc["title"] | "INFO";
-            int ttl = doc["ttl"] | 60; // Standard 60 Sekunden Gültigkeit
+            int ttl = doc["ttl"] | 60; 
             
             std::vector<SensorItem> items;
             JsonArray jsonItems = doc["items"];
@@ -93,12 +95,12 @@ private:
             for (JsonObject item : jsonItems) {
                 SensorItem si;
                 si.icon = item["icon"] | "";
-                si.text = item["text"] | "--"; // Der String von HA (Wert + Einheit)
+                si.text = item["text"] | "--"; 
                 si.color = item["color"] | "white";
                 items.push_back(si);
             }
             
-            // An die App senden
+            // Daten an die App übergeben
             sensorAppRef.updatePage(id, title, ttl, items);
         }
     }
@@ -121,25 +123,18 @@ public:
         WiFi.setSleep(false);
         if (WiFi.status() == WL_CONNECTED) return true;
         
-        status("Connecting...", displayRef.color565(255, 255, 255));
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(ssid, password);
-        
-        int r = 0;
-        while (WiFi.status() != WL_CONNECTED && r < 4) { 
-            delay(500); 
-            r++; 
+        // Versuche Verbindung (kurz)
+        if (WiFi.status() != WL_CONNECTED) {
+             WiFi.mode(WIFI_STA);
+             WiFi.begin(ssid, password);
+             delay(1000);
         }
 
         if (WiFi.status() == WL_CONNECTED) {
-            WiFi.setSleep(false);
-            status("WLAN OK", displayRef.color565(0, 255, 0));
             tryInitServices(); 
             return true;
-        } else {
-            status("No Connection", displayRef.color565(255, 0, 0));
-            return false;
-        }
+        } 
+        return false;
     }
 
     void tryInitServices() {
@@ -152,7 +147,6 @@ public:
         
         if (!timeInitialized) {
             configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-            status("NTP Request...", displayRef.color565(0, 0, 255));
             timeInitialized = true; 
         }
         
@@ -180,7 +174,6 @@ public:
         struct tm ti;
         if (getLocalTime(&ti, 0)) {
             timeSynced = true;
-            status("Time Synced!", displayRef.color565(0, 255, 0));
         }
     }
 
@@ -196,7 +189,6 @@ public:
                 mqttInitialized = false; 
                 WiFi.disconnect();
                 WiFi.reconnect();
-                WiFi.setSleep(false);
             }
             return; 
         }
@@ -213,7 +205,7 @@ public:
                 lastMqttRetry = now;
                 if (client.connect("MatrixPortalS3", mqtt_user, mqtt_pass, "matrix/status", 0, true, "OFF")) {
                     client.subscribe("matrix/cmd/#");
-                    client.subscribe("matrix/sensor");
+                    // client.subscribe("matrix/sensor"); // VERALTET
                     publishState();
                 }
             }
