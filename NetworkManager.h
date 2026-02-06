@@ -81,10 +81,25 @@ private:
              }
         }
 
-        if (t == "matrix/sensor") {
-            String temp = doc["temp"] | "--.-";
-            String hum = doc["hum"] | "--";
-            sensorAppRef.setData(temp, hum);
+        // --- NEU: Sensor Page Update ---
+        if (t == "matrix/cmd/sensor_page") {
+            String id = doc["id"] | "default";
+            String title = doc["title"] | "INFO";
+            int ttl = doc["ttl"] | 60; // Standard 60 Sekunden Gültigkeit
+            
+            std::vector<SensorItem> items;
+            JsonArray jsonItems = doc["items"];
+            
+            for (JsonObject item : jsonItems) {
+                SensorItem si;
+                si.icon = item["icon"] | "";
+                si.text = item["text"] | "--"; // Der String von HA (Wert + Einheit)
+                si.color = item["color"] | "white";
+                items.push_back(si);
+            }
+            
+            // An die App senden
+            sensorAppRef.updatePage(id, title, ttl, items);
         }
     }
 
