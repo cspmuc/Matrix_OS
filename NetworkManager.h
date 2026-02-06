@@ -7,8 +7,10 @@
 #include "DisplayManager.h"
 #include "SensorApp.h" 
 
-// Status Signatur angepasst (const String&)
+// Externe Funktionen (in Matrix_OS.ino definiert)
 extern void status(const String& msg, uint16_t color);
+// NEU: scrollSpeed Parameter hinzugefügt
+extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
 extern volatile bool otaActive;
 extern volatile int otaProgress;
 
@@ -17,7 +19,6 @@ private:
     WiFiClient espClient;
     PubSubClient client;
     
-    // Referenzen auf atomare Variablen
     std::atomic<AppMode>& currentAppRef;
     std::atomic<int>& brightnessRef;
     
@@ -26,7 +27,6 @@ private:
 
     static MatrixNetworkManager* instance;
     
-    // Status-Flags
     bool otaInitialized = false;
     bool timeInitialized = false;
     bool timeSynced = false;
@@ -38,7 +38,7 @@ private:
 
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
-        StaticJsonDocument<256> doc;
+        StaticJsonDocument<512> doc;
         DeserializationError error = deserializeJson(doc, payload, length);
 
         if (error) {
@@ -53,7 +53,6 @@ private:
         }
 
         if (t == "matrix/cmd/brightness" && doc.containsKey("val")) {
-            // FIX: Explizite Konvertierung zu int für std::atomic
             brightnessRef = doc["val"].as<int>();
             publishState();
         }
@@ -64,13 +63,22 @@ private:
             else if (newApp == "sensors") currentAppRef = SENSORS;
             else if (newApp == "testpattern") currentAppRef = TESTPATTERN;
             else if (newApp == "ticker") currentAppRef = TICKER;
-            else if (newApp == "plasma") currentAppRef = PLASMA; // <-- NEU
+            else if (newApp == "plasma") currentAppRef = PLASMA;
             else if (newApp == "off") currentAppRef = OFF;
             publishState(); 
         }     
 
         if (t == "matrix/cmd/overlay") {
-             status(doc["msg"].as<String>(), displayRef.color565(255, 255, 255));
+             String msg = doc["msg"] | "";
+             int dur = doc["duration"] | 5;    
+             String col = doc["color"] | "white";
+             
+             // NEU: Geschwindigkeit lesen (Default 30 Pixel/Sekunde)
+             int speed = doc["speed"] | 30; 
+             
+             if (msg.length() > 0) {
+                 queueOverlay(msg, dur, col, speed);
+             }
         }
 
         if (t == "matrix/sensor") {
@@ -85,7 +93,6 @@ private:
     }
 
 public:
-    // Konstruktor nimmt jetzt atomic Referenzen
     MatrixNetworkManager(std::atomic<AppMode>& app, std::atomic<int>& bright, DisplayManager& disp, SensorApp& sensors) 
         : client(espClient), currentAppRef(app), brightnessRef(bright), displayRef(disp), sensorAppRef(sensors) {
         instance = this;
@@ -97,10 +104,7 @@ public:
 
     bool begin() {
         WiFi.setSleep(false);
-        
-        if (WiFi.status() == WL_CONNECTED) {
-            return true;
-        }
+        if (WiFi.status() == WL_CONNECTED) return true;
         
         status("Connecting...", displayRef.color565(255, 255, 255));
         WiFi.mode(WIFI_STA);
@@ -152,9 +156,7 @@ public:
         ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
             otaProgress = (progress / (total / 100));
         });
-        ArduinoOTA.onError([](ota_error_t error) {
-            otaActive = false;
-        });
+        ArduinoOTA.onError([](ota_error_t error) { otaActive = false; });
         ArduinoOTA.begin();
     }
     
@@ -168,13 +170,10 @@ public:
     }
 
     void loop() {
-        if (otaInitialized) {
-            ArduinoOTA.handle();
-        }
+        if (otaInitialized) ArduinoOTA.handle();
 
         unsigned long now = millis();
 
-        // 1. WLAN Check
         if (WiFi.status() != WL_CONNECTED) {
             if (now - lastWifiCheck > 10000) { 
                 lastWifiCheck = now;
@@ -187,16 +186,13 @@ public:
             return; 
         }
 
-        // 2. Dienste
         tryInitServices();
         
-        // 3. Zeit Check
         if (!timeSynced && (now - lastTimeCheck > 1000)) {
             lastTimeCheck = now;
             checkTimeSync();
         }
 
-        // 4. MQTT
         if (!client.connected()) {
             if (now - lastMqttRetry > 5000) { 
                 lastMqttRetry = now;
@@ -213,7 +209,6 @@ public:
 
     void publishState() {
         if (!client.connected()) return;
-        // .load() ist nicht zwingend bei atomic int read, aber explizit
         if (brightnessRef > 0) client.publish("matrix/status", "ON", true);
         else client.publish("matrix/status", "OFF", true);
         client.publish("matrix/status/brightness", String(brightnessRef.load()).c_str(), true);
@@ -223,7 +218,7 @@ public:
             case SENSORS:     appStr = "sensors"; break;
             case TESTPATTERN: appStr = "testpattern"; break;
             case TICKER:      appStr = "ticker"; break;
-            case PLASMA:      appStr = "plasma"; break; // <--- DAS FEHLTE
+            case PLASMA:      appStr = "plasma"; break;
             default:          appStr = "off"; break;
         }
         client.publish("matrix/status/app", appStr.c_str(), true);

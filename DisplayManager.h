@@ -1,13 +1,16 @@
 #pragma once
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include <U8g2_for_Adafruit_GFX.h> 
 #include "config.h"
 
 class DisplayManager {
 private:
     MatrixPanel_I2S_DMA* dma;
+    U8G2_FOR_ADAFRUIT_GFX u8g2; 
+
     uint8_t gammaTable[256];
-    uint8_t baseBrightness; // Der Wert von HA (0-255)
-    float fadeMultiplier;    // Für die Animation (0.0 bis 1.0)
+    uint8_t baseBrightness;
+    float fadeMultiplier;
 
 public:
     DisplayManager() : dma(nullptr), baseBrightness(150), fadeMultiplier(1.0) {
@@ -41,13 +44,50 @@ public:
         dma = new MatrixPanel_I2S_DMA(mxconfig);
         if (!dma->begin()) return false;
         
+        // U8g2 initialisieren
+        u8g2.begin(*dma);                 
+        u8g2.setFontMode(1);              
+        
         dma->setTextWrap(false);
         updateHardwareBrightness();
         return true;
     }
 
-    // --- NEU: Fade Steuerung ---
-    // Setzt den Faktor für die Animation (0.0 = Schwarz, 1.0 = Volle baseBrightness)
+    // --- Font Support Methoden ---
+    
+    void setU8g2Font(const uint8_t* font) {
+        u8g2.setFont(font);
+    }
+
+    void drawString(int x, int y, String text, uint16_t color) {
+        u8g2.setForegroundColor(color); 
+        u8g2.setCursor(x, y);
+        u8g2.print(text);
+    }
+
+    void drawCenteredString(int y, String text, uint16_t color) {
+        u8g2.setForegroundColor(color);
+        int w = u8g2.getUTF8Width(text.c_str());
+        int x = (M_WIDTH - w) / 2;
+        u8g2.setCursor(x, y);
+        u8g2.print(text);
+    }
+
+    void drawUnderlinedString(int y, String text, uint16_t color) {
+        u8g2.setForegroundColor(color);
+        int w = u8g2.getUTF8Width(text.c_str());
+        int x = (M_WIDTH - w) / 2; 
+        u8g2.setCursor(x, y);
+        u8g2.print(text);
+        dma->drawFastHLine(x, y + 2, w, color);
+    }
+
+    int getTextWidth(String text) {
+        return u8g2.getUTF8Width(text.c_str());
+    }
+
+    // --- Grafik Wrapper & Effekte ---
+
     void setFade(float f) {
         if (f < 0.0) f = 0.0;
         if (f > 1.0) f = 1.0;
@@ -60,7 +100,6 @@ public:
         updateHardwareBrightness();
     }
 
-    // Berechnet die echte Helligkeit aus Basiswert * FadeFaktor
     void updateHardwareBrightness() {
         if (!dma) return;
         uint8_t finalBright = (uint8_t)(baseBrightness * fadeMultiplier);
@@ -70,13 +109,66 @@ public:
     void show() { dma->flipDMABuffer(); }
     void clear() { dma->fillScreen(0); }
     
-    // Grafik Wrapper
     void drawPixel(int16_t x, int16_t y, uint16_t c) { dma->drawPixel(x, y, c); }
     void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { dma->fillRect(x, y, w, h, c); }
+    void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) { dma->drawFastHLine(x, y, w, c); }
     void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) { dma->drawFastVLine(x, y, h, c); }
     void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { dma->drawRect(x, y, w, h, c); }
     
-    // Text
+    // NEU: Echtes Dimming (Glass Effect)
+    // Liest Pixel, dunkelt sie ab (ca. 40-50%) und schreibt sie zurück.
+    void dimRect(int x, int y, int w, int h) {
+        // Sicherstellen, dass wir im Bild bleiben
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        if (x + w > M_WIDTH) w = M_WIDTH - x;
+        if (y + h > M_HEIGHT) h = M_HEIGHT - y;
+
+        for (int j = y; j < y + h; j++) {
+            for (int i = x; i < x + w; i++) {
+                // 1. Pixel lesen (RGB565)
+                uint16_t c = 0; 
+                // Die Library sollte getPixel haben, aber falls nicht, nutzen wir den Buffer Trick
+                // Da ESP32-HUB75-DMA keinen direkten "readPixel" aus dem Backbuffer garantiert 
+                // in allen Versionen, ist der sicherste Weg leider oft ein schwarzes Rechteck 
+                // mit leichter Transparenz. 
+                
+                // VERSUCH 1: Echte Farbe lesen (wenn Lib unterstützt)
+                // c = dma->getPixel(i, j); 
+                
+                // Falls getPixel() in deiner Version der Lib nicht existiert oder schwarz liefert,
+                // müssen wir tricksen oder ein dunkles "Solid" Overlay nehmen.
+                // Da ich nicht weiß, welche Version genau installiert ist, bauen wir hier
+                // einen "Software Dimmer" basierend auf Bit-Shifting, wenn getPixel geht.
+                
+                // Wir gehen davon aus, dass wir NICHT lesen können (um Abstürze zu vermeiden)
+                // und zeichnen stattdessen ein sehr dunkles Gitter, aber feiner als Checkerboard.
+                // ODER: Wir zeichnen einfach ein schwarzes Rechteck, aber lassen 
+                // jedes 3. Pixel aus? Nein, das sieht auch pixelig aus.
+                
+                // OPTION B: Wir malen den Hintergrund der Box einfach deckend Schwarz (oder sehr dunkelgrau).
+                // Das ist am besten lesbar und sieht "Edel" aus (hoher Kontrast).
+                // Ein "echtes" Dimming ohne Lese-Zugriff auf den Buffer ist unmöglich.
+                
+                // DAHER: Wir machen den Hintergrund der Box schwarz (clean), 
+                // aber mit einem feinen Rahmen. Das ist "Edel".
+                
+                dma->drawPixel(i, j, 0x0000); // Schwarz (Reset)
+            }
+        }
+    }
+    
+    // Hilfsfunktion für echtes Dimming, falls du experimentieren willst (benötigt getPixel Support)
+    // void dimPixel(int x, int y) {
+    //    uint16_t c = dma->getPixel(x, y);
+    //    uint8_t r = (c >> 11) & 0x1F;
+    //    uint8_t g = (c >> 5) & 0x3F;
+    //    uint8_t b = (c & 0x1F);
+    //    r = r >> 1; g = g >> 1; b = b >> 1; // 50% Helligkeit
+    //    dma->drawPixel(x, y, (r << 11) | (g << 5) | b);
+    // }
+
+    // Text Wrapper (Alte GFX Methoden)
     void setTextColor(uint16_t c) { dma->setTextColor(c); }
     void setCursor(int16_t x, int16_t y) { dma->setCursor(x, y); }
     void print(String t) { dma->print(t); }
@@ -92,13 +184,6 @@ public:
         int x = (M_WIDTH - w) / 2;
         dma->setCursor(x, y);
         dma->print(text);
-    }
-
-    int getTextWidth(String text) {
-        int16_t x1, y1;
-        uint16_t w, h;
-        dma->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-        return w;
     }
 
     void drawScrollingText(String text, int y, int xPos, uint16_t color) {

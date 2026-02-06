@@ -1,6 +1,7 @@
 #include <ArduinoJson.h>
 #include <math.h>
 #include <vector>
+#include <deque>
 #include <atomic> 
 #include "config.h"
 
@@ -11,47 +12,67 @@
 #include "TestPatternApp.h"
 #include "SensorApp.h"
 #include "TickerApp.h"
-#include "PlasmaApp.h" // NEU: Plasma App Include
+#include "PlasmaApp.h"
+#include "RichText.h"
 
-// Globale Steuerung (Thread-Sicher!)
+// Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
 std::atomic<int> brightness(150); 
 
-// Objekte instanziieren
+// Objekte
 DisplayManager display;
+RichText richTextOverlay; 
 
 WordClockApp appWordClock;
 TestPatternApp appTestPattern;
 SensorApp appSensors;
 TickerApp appTicker;
-PlasmaApp appPlasma; // NEU: Plasma App Instanz
+PlasmaApp appPlasma;
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
 SemaphoreHandle_t overlayMutex; 
 volatile bool isBooting = true;
 
-struct BootLogEntry {
-    String text;
-    uint16_t color;
-};
-
+// --- BOOT LOGIC ---
+struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
 
+// --- OTA STATUS ---
 volatile bool otaActive = false;
 volatile int otaProgress = 0;
 
-volatile bool overlayActive = false;
-String overlayMsg = "";
-unsigned long overlayTimer = 0;
+// --- OVERLAY SYSTEM (Queue) ---
+struct OverlayMessage {
+    String text;
+    int durationSec;
+    String colorName;
+    int scrollSpeed; // NEU: Pixel pro Sekunde
+};
 
-// Konstanten für den Loop
+std::deque<OverlayMessage> overlayQueue;
+bool isOverlayActive = false;
+unsigned long overlayStartTime = 0; 
+unsigned long overlayEndTime = 0;
+OverlayMessage currentOverlay;
+
 const int frameDelay = 16; 
 const int fadeDurationMs = 500;
 const float fadeStep = 1.0 / ((float)fadeDurationMs / (float)frameDelay);
 
-// Status Funktion (Speicherschonend)
+// --- FUNKTIONEN ---
+
+// NEU: scrollSpeed Parameter übernehmen
+void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
+    if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
+        if (overlayQueue.size() < 5) {
+            overlayQueue.push_back({msg, durationSec, colorName, scrollSpeed});
+        }
+        xSemaphoreGive(overlayMutex);
+    }
+}
+
 void status(const String& msg, uint16_t color = 0xFFFF) {
   if (overlayMutex && xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
     if (isBooting) {
@@ -59,10 +80,6 @@ void status(const String& msg, uint16_t color = 0xFFFF) {
       sprintf(buf, "%02d %s", bootLogCounter++, msg.c_str());
       bootLogs.push_back({String(buf), color});
       if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
-    } else {
-      overlayMsg = msg;
-      overlayActive = true;
-      overlayTimer = millis() + 4000;
     }
     xSemaphoreGive(overlayMutex);
   }
@@ -71,17 +88,14 @@ void status(const String& msg, uint16_t color = 0xFFFF) {
 void drawBootLog() {
   display.setTextSize(1);
   display.setFont(NULL); 
-  
   int y = 0;
   for (const auto& entry : bootLogs) {
     display.setTextColor(display.color565(100, 100, 100)); 
     display.setCursor(2, y); 
     display.print(entry.text.substring(0, 3));
-
     display.setTextColor(entry.color);
     display.setCursor(20, y);
     display.print(entry.text.substring(3));
-    
     y += 8; 
   }
 }
@@ -96,24 +110,88 @@ void drawOTA(int progress) {
   display.printCentered(p, 50);
 }
 
-void drawOverlay(String text) {
-  display.fillRect(0, 18, M_WIDTH, 28, display.color565(0, 0, 100)); 
-  display.drawRect(0, 18, M_WIDTH, 28, display.color565(255, 255, 255)); 
-  display.setTextColor(display.color565(255, 255, 255));
-  display.printCentered(text, 28);
+// --- OVERLAY RENDERING MIT SCROLLING ---
+void processAndDrawOverlay(DisplayManager& display) {
+    unsigned long now = millis();
+
+    if (xSemaphoreTake(overlayMutex, 0) == pdTRUE) { 
+        if (isOverlayActive) {
+            if (now > overlayEndTime) {
+                isOverlayActive = false;
+            }
+        }
+        if (!isOverlayActive && !overlayQueue.empty()) {
+            currentOverlay = overlayQueue.front();
+            overlayQueue.pop_front();
+            
+            isOverlayActive = true;
+            overlayStartTime = now;
+            overlayEndTime = now + (currentOverlay.durationSec * 1000);
+        }
+        xSemaphoreGive(overlayMutex);
+    }
+
+    if (isOverlayActive) {
+        String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
+        
+        int textW = richTextOverlay.getTextWidth(display, finalMsg, "Medium");
+        
+        int boxH = 34;
+        int boxW = 104; 
+        
+        bool isScrolling = false;
+        
+        if (textW > (boxW - 10)) {
+            boxW = M_WIDTH; 
+            isScrolling = true;
+        }
+
+        int boxX = (M_WIDTH - boxW) / 2;
+        int boxY = (M_HEIGHT - boxH) / 2;
+
+        display.dimRect(boxX, boxY, boxW, boxH); 
+        display.drawRect(boxX, boxY, boxW, boxH, display.color565(80, 80, 80));
+
+        int textY = boxY + (boxH / 2) + 5;
+
+        if (!isScrolling) {
+            richTextOverlay.drawCentered(display, textY, finalMsg, "Medium");
+        } else {
+            // SCROLLING LOGIK NEU (Pixel pro Sekunde)
+            float speedPPS = (float)currentOverlay.scrollSpeed; // z.B. 30.0
+            
+            long timePassedMs = now - overlayStartTime;
+            
+            // Berechne Pixel-Offset als Float für mehr Präzision vor dem Runden
+            // (time in sec) * pixels_per_sec
+            float pixelsMoved = ((float)timePassedMs / 1000.0f) * speedPPS;
+            
+            int startX = boxX + boxW;
+            int totalDist = boxW + textW + 20; 
+            
+            // Modulo math mit int, aber basierend auf präziserem "pixelsMoved"
+            int currentScrollX = startX - ((int)pixelsMoved % totalDist);
+            
+            richTextOverlay.drawString(display, currentScrollX, textY, finalMsg, "Medium");
+        }
+        
+        int totalDur = currentOverlay.durationSec * 1000;
+        long remaining = overlayEndTime - now;
+        if (remaining > 0) {
+            int barWidth = map(remaining, 0, totalDur, 0, boxW - 2);
+            display.drawFastHLine(boxX + 1, boxY + boxH - 2, barWidth, display.color565(200, 200, 200));
+        }
+    }
 }
+
+// --- TASKS ---
 
 TaskHandle_t NetworkTask;
 TaskHandle_t DisplayTask;
 
 void networkTaskFunction(void * pvParameters) {
-  
-  // --- STRICT BOOT SEQUENCE ---
   while (true) {
-      
-      // 1. WLAN VERBINDUNG
       status("Connect WiFi...", display.color565(255, 255, 255));
-      
       while(!network.isConnected()) {
           if (network.begin()) {
              String ip = network.getIp();
@@ -126,36 +204,26 @@ void networkTaskFunction(void * pvParameters) {
           }
       }
 
-      // 2. ZEIT SYNCHRONISATION
-      status("Wait for Time...", display.color565(255, 165, 0)); 
-      
+      status("Wait for Time...", display.color565(255, 165, 0));
       network.tryInitServices(); 
       
       bool timeSuccess = false;
       while(!timeSuccess) {
-          network.loop(); 
-          
+          network.loop();
           if (!network.isConnected()) {
               status("WiFi Lost!", display.color565(255, 0, 0));
               delay(1000);
-              break; // Zurück zu Schritt 1
+              break; 
           }
-
           if (network.isTimeSynced()) {
               timeSuccess = true;
           }
-          
-          delay(100); 
+          delay(100);
       }
-
-      if (timeSuccess) {
-          break; // Alles OK
-      }
+      if (timeSuccess) break;
   }
 
-  // --- FINISH ---
-  status("Start in 3s", display.color565(255, 255, 255)); 
-
+  status("Start in 3s", display.color565(255, 255, 255));
   delay(3000);
 
   if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
@@ -170,25 +238,19 @@ void networkTaskFunction(void * pvParameters) {
 }
 
 void displayTaskFunction(void * pvParameters) {
-  // Lokale Kopie vom atomaren Wert
   AppMode displayedApp = currentApp.load();
   float fadeVal = 1.0;
 
-  // Präzises Timing Setup
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = pdMS_TO_TICKS(frameDelay); // 16ms
+  const TickType_t xFrequency = pdMS_TO_TICKS(frameDelay);
   
   for(;;) {
-      unsigned long now = millis();
-      
-      // Atomaren Wert laden
       int currentBright = brightness.load();
       display.setBrightness(currentBright);
       
       AppMode targetApp = currentApp.load();
-
       if (displayedApp != targetApp) {
-          fadeVal -= fadeStep; 
+          fadeVal -= fadeStep;
           if (fadeVal <= 0.0) {
               fadeVal = 0.0;
               displayedApp = targetApp; 
@@ -209,47 +271,37 @@ void displayTaskFunction(void * pvParameters) {
         localBooting = isBooting;
         localOta = otaActive;
         localOtaProg = otaProgress;
-        
-        display.clear(); 
+        xSemaphoreGive(overlayMutex); 
+      }
 
-        if (localOta) {
-           display.setFade(1.0); 
-           drawOTA(localOtaProg);
-           xSemaphoreGive(overlayMutex);
-        }
-        else if (localBooting) {
+      display.clear(); 
+
+      if (localOta) {
            display.setFade(1.0);
-           drawBootLog(); 
-           xSemaphoreGive(overlayMutex); 
-        } 
-        else {
-           xSemaphoreGive(overlayMutex); 
-           
+           drawOTA(localOtaProg);
+      }
+      else if (localBooting) {
+           display.setFade(1.0);
+           if (xSemaphoreTake(overlayMutex, 5)) {
+              drawBootLog();
+              xSemaphoreGive(overlayMutex);
+           }
+      } 
+      else {
            if (currentBright > 0) {
              switch(displayedApp) {
                case WORDCLOCK:   appWordClock.draw(display);   break;
                case SENSORS:     appSensors.draw(display);     break;
                case TESTPATTERN: appTestPattern.draw(display); break;
                case TICKER:      appTicker.draw(display);      break;
-               case PLASMA:      appPlasma.draw(display);      break; // NEU: Plasma Case
-               case OFF:         display.clear(); break;
+               case PLASMA:      appPlasma.draw(display);      break;
+               case OFF:         break;
              }
-             
-             if (xSemaphoreTake(overlayMutex, 5 / portTICK_PERIOD_MS) == pdTRUE) {
-                if (overlayActive) {
-                  display.setFade(1.0); 
-                  if (now > overlayTimer) overlayActive = false;
-                  else drawOverlay(overlayMsg);
-                }
-                xSemaphoreGive(overlayMutex);
-             }
+             processAndDrawOverlay(display);
            }
-        }
       } 
       
       display.show();
-      
-      // Präzises Warten
       vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
@@ -257,14 +309,11 @@ void displayTaskFunction(void * pvParameters) {
 void setup() {
   Serial.begin(115200);
   overlayMutex = xSemaphoreCreateMutex();
-
   if (!display.begin()) {
-    Serial.println("Display Init Failed!");
     while(1);
   }
   
-  status("Boot..."); 
-
+  status("Boot...");
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 10000, NULL, 0, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }
