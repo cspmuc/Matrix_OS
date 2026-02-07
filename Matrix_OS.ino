@@ -40,7 +40,7 @@ MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 SemaphoreHandle_t overlayMutex; 
 volatile bool isBooting = true;
 
-// --- BOOT LOGIC ---
+// --- BOOT & OVERLAY GLOBALS ---
 struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
@@ -79,7 +79,7 @@ void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed
 }
 
 void status(const String& msg, uint16_t color = 0xFFFF) {
-  // FIX: Ausgabe auf Serial Monitor hinzufügen!
+  // Debug Ausgabe auf Serial erzwingen
   Serial.println("[STATUS] " + msg);
 
   if (overlayMutex && xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
@@ -184,48 +184,45 @@ TaskHandle_t NetworkTask;
 TaskHandle_t DisplayTask;
 
 void networkTaskFunction(void * pvParameters) {
-  while (true) {
-      status("Connect WiFi...", display.color565(255, 255, 255));
-      while(!network.isConnected()) {
-          if (network.begin()) {
-             String ip = network.getIp();
-             status("IP: " + ip, display.color565(0, 255, 0));
-             
-             // WebInterface starten, sobald WLAN da ist
-             webInterface.begin();
-             
-             delay(2500); 
-             break; 
-          } else {
-             status("WiFi Retry 5s...", display.color565(255, 0, 0));
-             delay(5000); 
-          }
-      }
-
-      status("Wait for Time...", display.color565(255, 165, 0));
-      network.tryInitServices();
-      bool timeSuccess = false;
-      while(!timeSuccess) {
-          network.loop();
-          webInterface.loop(); 
-
-          if (!network.isConnected()) {
-              status("WiFi Lost!", display.color565(255, 0, 0));
-              delay(1000);
-              break; 
-          }
-          if (network.isTimeSynced()) {
-              timeSuccess = true;
-          }
-          delay(100);
-      }
-      if (timeSuccess) break;
+  // 1. WiFi Verbindung aufbauen (oder prüfen)
+  status("Connect WiFi...", display.color565(255, 255, 255));
+  
+  if (!network.isConnected()) {
+      network.begin(); // Startet Verbindungsprozess
   }
 
+  // Warten bis wirklich verbunden
+  while(!network.isConnected()) {
+      status("WiFi Retry...", display.color565(255, 0, 0));
+      delay(1000);
+      network.begin(); // Retry
+  }
+
+  // 2. WICHTIG: Services starten (JETZT erst, wo wir sicher verbunden sind)
+  // Das WebInterface muss bedingungslos starten, egal ob WiFi schon da war oder nicht.
+  String ip = network.getIp();
+  status("IP: " + ip, display.color565(0, 255, 0));
+  
+  Serial.println("[STATUS] Starting WebInterface...");
+  webInterface.begin(); // Startet Server & LittleFS
+
+  // 3. Zeit & OTA Services
+  status("Wait for Time...", display.color565(255, 165, 0));
+  network.tryInitServices();
+  
+  // Warten auf Zeit-Sync
+  while(!network.isTimeSynced()) {
+      network.loop();
+      webInterface.loop(); 
+      delay(100);
+  }
+
+  // 4. Emojis laden
   status("Start in 3s", display.color565(255, 255, 255));
   
-  // Emoji Engine starten
-  emojiEngine.begin();
+  // Falls LittleFS noch formatiert wird, sehen wir das hier im Log
+  Serial.println("[STATUS] Loading Emojis...");
+  emojiEngine.begin(); 
 
   delay(3000);
 
@@ -234,10 +231,10 @@ void networkTaskFunction(void * pvParameters) {
     xSemaphoreGive(overlayMutex);
   }
   
+  // 5. Hauptschleife
   for(;;) {
     network.loop();
     webInterface.loop(); 
-    // WICHTIG: Kleines Delay, damit der Task nicht 100% CPU frisst
     vTaskDelay((otaActive ? 1 : 10) / portTICK_PERIOD_MS);
   }
 }
@@ -310,8 +307,8 @@ void displayTaskFunction(void * pvParameters) {
 void setup() {
   Serial.begin(115200);
   
-  // FIX: Kurz warten, damit USB Serial ready ist
-  delay(2000); 
+  // Warten auf USB Serial
+  delay(2000);
   Serial.println("--- MATRIX OS BOOT ---");
 
   overlayMutex = xSemaphoreCreateMutex();
@@ -322,7 +319,7 @@ void setup() {
   
   status("Boot...");
   
-  // FIX: Stack Size explizit auf 20000 gesetzt (sicher ist sicher!)
+  // WICHTIG: Stack Size 20000 (20KB) damit WebServer + MQTT Platz haben
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 20000, NULL, 1, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }
