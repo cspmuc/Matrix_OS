@@ -7,37 +7,42 @@ class WebInterface {
 private:
     WebServer server;
     bool active = false;
-    bool fsMounted = false; // Neuer Status
+    bool fsMounted = false;
 
 public:
     WebInterface() : server(80) {}
 
     void begin() {
-        // Versuch 1: Normal mounten
+        // VERSUCH: LittleFS starten. 'true' bedeutet: Formatieren, wenn kaputt/leer!
+        // Das verhindert den "Connection Refused" Fehler, weil der ESP nicht mehr in einer Bootschleife hängt.
         if (LittleFS.begin(true)) {
             fsMounted = true;
-            Serial.println("WebInterface: LittleFS Mounted.");
+            Serial.println("WebInterface: LittleFS erfolgreich geladen.");
         } else {
-            Serial.println("WebInterface: LittleFS FAILED!");
+            Serial.println("WebInterface: LittleFS FEHLGESCHLAGEN! (Partition Scheme prüfen?)");
             fsMounted = false;
-            // Wir machen trotzdem weiter, damit der Server startet!
         }
 
         // --- ROUTEN ---
+        
+        // Hauptseite
         server.on("/", HTTP_GET, [this]() {
             if (!fsMounted) {
-                server.send(200, "text/html", "<h1>Fehler</h1><p>LittleFS konnte nicht geladen werden.</p><p>Bitte Partition Scheme pr&uuml;fen (Tools -> Partition Scheme) und 'Default 4MB with SPIFFS' w&auml;hlen.</p>");
+                // Falls FS kaputt: Fehlerseite anzeigen statt Absturz
+                server.send(200, "text/html", "<html><body><h1>Dateisystem Fehler</h1><p>LittleFS konnte nicht geladen werden.</p><p>Bitte in Arduino IDE pr&uuml;fen: <b>ESP32S3 Dev Module</b> & <b>Default 4MB with SPIFFS</b></p></body></html>");
                 return;
             }
             handleFileList();
         });
 
+        // Upload Endpunkt
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/plain", ""); 
         }, [this]() {
             if (fsMounted) handleFileUpload(); 
         });
 
+        // Datei Löschen
         server.on("/delete", HTTP_GET, [this]() {
             if (!fsMounted) return server.send(500, "text/plain", "No FS");
             String path = server.arg("name");
@@ -46,6 +51,7 @@ public:
             server.send(303);
         });
         
+        // Dateien abrufen (für Bilder/JSON)
         server.onNotFound([this]() {
             if (!fsMounted) { server.send(404, "text/plain", "FS Error"); return; }
             if (!handleFileRead(server.uri())) {
@@ -53,9 +59,9 @@ public:
             }
         });
 
-        server.begin(); // Server starten, egal ob FS geht oder nicht!
+        server.begin(); 
         active = true;
-        Serial.println("WebInterface: Server gestartet (Port 80).");
+        Serial.println("WebInterface: Server gestartet.");
     }
 
     void loop() {
@@ -64,7 +70,7 @@ public:
 
 private:
     void handleFileList() {
-        String html = "<html><head><title>Matrix OS Admin</title>";
+        String html = "<html><head><title>Matrix OS</title>";
         html += "<style>body{font-family:sans-serif; background:#222; color:#fff; padding:20px;}";
         html += "a{color:#0cf; text-decoration:none;} table{width:100%; border-collapse:collapse; margin-top:20px;}";
         html += "td{padding:8px; border-bottom:1px solid #444;} .btn{background:#0cf; color:#000; padding:5px 10px; border:none; cursor:pointer;}</style></head><body>";
@@ -120,8 +126,6 @@ private:
         if (path.endsWith("/")) path += "index.htm";
         String contentType = "text/plain";
         if (path.endsWith(".html")) contentType = "text/html";
-        else if (path.endsWith(".css")) contentType = "text/css";
-        else if (path.endsWith(".js")) contentType = "application/javascript";
         else if (path.endsWith(".json")) contentType = "application/json";
         else if (path.endsWith(".bmp")) contentType = "image/bmp";
         else if (path.endsWith(".png")) contentType = "image/png";

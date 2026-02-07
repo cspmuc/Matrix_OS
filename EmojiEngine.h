@@ -18,17 +18,24 @@ private:
 
 public:
     void begin() {
-        if (!LittleFS.begin(true)) { Serial.println("LittleFS Mount Failed"); return; }
+        // Wir verlassen uns darauf, dass WebInterface oder Matrix_OS LittleFS schon gestartet hat.
+        // Falls nicht, versuchen wir es hier sanft.
+        if (!LittleFS.begin(true)) { Serial.println("EmojiEngine: FS Start Fehler"); return; }
+        
         loadCatalog();
         ready = true;
     }
 
     void loadCatalog() {
-        if (!LittleFS.exists("/catalog.json")) return;
+        if (!LittleFS.exists("/catalog.json")) {
+            Serial.println("EmojiEngine: Kein Katalog gefunden.");
+            return;
+        }
         File file = LittleFS.open("/catalog.json", "r");
+        
         DynamicJsonDocument doc(4096); 
         DeserializationError error = deserializeJson(doc, file);
-        if (error) return;
+        if (error) { Serial.println("EmojiEngine: JSON Fehler"); return; }
 
         JsonObject sheets = doc["sheets"];
         for (JsonPair kv : sheets) {
@@ -50,11 +57,12 @@ public:
             iconMap[kv.key().c_str()] = def;
         }
         file.close();
+        Serial.println("EmojiEngine: Katalog geladen.");
     }
 
     void drawIcon(DisplayManager& d, String name, int x, int y) {
         if (!ready) return;
-        if (iconMap.find(name) == iconMap.end()) return;
+        if (iconMap.find(name) == iconMap.end()) return; // Icon unbekannt
 
         IconDef& icon = iconMap[name];
         if (icon.sheetName.length() > 0) {
@@ -73,6 +81,8 @@ private:
 
         int row = index / sheet.cols;
         int col = index % sheet.cols;
+        
+        // BMP Header manuell lesen (schneller als Libs)
         uint32_t dataOffset = 54; 
         f.seek(10); f.read((uint8_t*)&dataOffset, 4);
         int32_t bmpHeight = 0;
@@ -80,11 +90,8 @@ private:
         bool isTopDown = (bmpHeight < 0);
         bmpHeight = abs(bmpHeight);
         
-        // Annahme: BMP ist exakt gepackt oder wir ignorieren Padding hier einfachheitshalber für 16px
-        // Korrekter wäre: rowSize = (width * 3 + 3) & ~3;
-        // Wir lesen hier einfach:
         int32_t bmpWidth = 0; f.seek(18); f.read((uint8_t*)&bmpWidth, 4);
-        int rowSize = (bmpWidth * 3 + 3) & ~3;
+        int rowSize = (bmpWidth * 3 + 3) & ~3; // Padding berechnen
 
         int sheetX = col * defaultSize;
         int sheetY = row * defaultSize;
@@ -99,6 +106,7 @@ private:
                 uint8_t b = lineBuffer[j * 3 + 0];
                 uint8_t g = lineBuffer[j * 3 + 1];
                 uint8_t r = lineBuffer[j * 3 + 2];
+                // Chroma Key: Schwarz (0,0,0) ist transparent
                 if (r == 0 && g == 0 && b == 0) continue; 
                 d.drawPixel(x + j, y + i, d.color565(r, g, b));
             }

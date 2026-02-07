@@ -14,7 +14,7 @@
 #include "PlasmaApp.h"
 #include "RichText.h"
 #include "EmojiEngine.h"
-#include "WebInterface.h" // NEU
+#include "WebInterface.h"
 
 // Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
@@ -30,23 +30,20 @@ SensorApp appSensors;
 TickerApp appTicker;
 PlasmaApp appPlasma;
 EmojiEngine emojiEngine;
-WebInterface webInterface; // NEU
+WebInterface webInterface;
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
 SemaphoreHandle_t overlayMutex; 
 volatile bool isBooting = true;
 
-// --- BOOT LOGIC ---
+// --- BOOT & OVERLAY GLOBALS ---
 struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
-
-// --- OTA STATUS ---
 volatile bool otaActive = false;
 volatile int otaProgress = 0;
 
-// --- OVERLAY SYSTEM (Queue) ---
 struct OverlayMessage { String text; int durationSec; String colorName; int scrollSpeed; };
 std::deque<OverlayMessage> overlayQueue;
 bool isOverlayActive = false;
@@ -62,9 +59,7 @@ const float fadeStep = 1.0 / ((float)fadeDurationMs / (float)frameDelay);
 
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
     if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
-        if (overlayQueue.size() < 5) {
-            overlayQueue.push_back({msg, durationSec, colorName, scrollSpeed});
-        }
+        if (overlayQueue.size() < 5) overlayQueue.push_back({msg, durationSec, colorName, scrollSpeed});
         xSemaphoreGive(overlayMutex);
     }
 }
@@ -72,8 +67,7 @@ void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed
 void status(const String& msg, uint16_t color = 0xFFFF) {
   if (overlayMutex && xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
     if (isBooting) {
-      char buf[64];
-      sprintf(buf, "%02d %s", bootLogCounter++, msg.c_str());
+      char buf[64]; sprintf(buf, "%02d %s", bootLogCounter++, msg.c_str());
       bootLogs.push_back({String(buf), color});
       if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
     }
@@ -82,16 +76,13 @@ void status(const String& msg, uint16_t color = 0xFFFF) {
 }
 
 void drawBootLog() {
-  display.setTextSize(1);
-  display.setFont(NULL); 
+  display.setTextSize(1); display.setFont(NULL); 
   int y = 0;
   for (const auto& entry : bootLogs) {
     display.setTextColor(display.color565(100, 100, 100)); 
-    display.setCursor(2, y); 
-    display.print(entry.text.substring(0, 3));
+    display.setCursor(2, y); display.print(entry.text.substring(0, 3));
     display.setTextColor(entry.color);
-    display.setCursor(20, y);
-    display.print(entry.text.substring(3));
+    display.setCursor(20, y); display.print(entry.text.substring(3));
     y += 8; 
   }
 }
@@ -109,9 +100,7 @@ void drawOTA(int progress) {
 void processAndDrawOverlay(DisplayManager& display) {
     unsigned long now = millis();
     if (xSemaphoreTake(overlayMutex, 0) == pdTRUE) { 
-        if (isOverlayActive) {
-            if (now > overlayEndTime) isOverlayActive = false;
-        }
+        if (isOverlayActive && now > overlayEndTime) isOverlayActive = false;
         if (!isOverlayActive && !overlayQueue.empty()) {
             currentOverlay = overlayQueue.front();
             overlayQueue.pop_front();
@@ -183,7 +172,7 @@ void networkTaskFunction(void * pvParameters) {
       bool timeSuccess = false;
       while(!timeSuccess) {
           network.loop();
-          webInterface.loop(); // Webserver am Leben halten
+          webInterface.loop(); 
           
           if (!network.isConnected()) {
               status("WiFi Lost!", display.color565(255, 0, 0));
@@ -205,7 +194,7 @@ void networkTaskFunction(void * pvParameters) {
   
   for(;;) {
     network.loop();
-    webInterface.loop(); // Webserver Loop
+    webInterface.loop();
     vTaskDelay((otaActive ? 1 : 10) / portTICK_PERIOD_MS);
   }
 }
@@ -266,7 +255,7 @@ void setup() {
   overlayMutex = xSemaphoreCreateMutex();
   if (!display.begin()) while(1);
   
-  emojiEngine.begin(); // Dateisystem Mounten & Icons laden
+  emojiEngine.begin(); 
   
   status("Boot...");
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 10000, NULL, 0, &NetworkTask, 0);

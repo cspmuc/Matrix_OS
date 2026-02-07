@@ -7,7 +7,7 @@
 #include "DisplayManager.h"
 #include "SensorApp.h" 
 
-// Externe Funktionen
+// Externe Funktionen (aus Matrix_OS.ino)
 extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
 extern volatile bool otaActive;
@@ -119,7 +119,7 @@ public:
         if (!mqttInitialized) { 
             client.setServer(mqtt_server, mqtt_port);
             client.setCallback(mqttCallbackTrampoline);
-            client.setBufferSize(2048); 
+            client.setBufferSize(2048); // WICHTIG für große Payloads
             mqttInitialized = true;
         }
     }
