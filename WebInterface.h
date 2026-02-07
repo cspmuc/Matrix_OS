@@ -27,7 +27,6 @@ public:
             handleFileList();
         });
 
-        // UPLOAD HANDLER
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/plain", "OK"); 
         }, [this]() {
@@ -78,7 +77,7 @@ private:
         HTTPUpload& upload = server.upload();
         
         if (upload.status == UPLOAD_FILE_START) {
-            // WICHTIG: Display stoppen!
+            // Display stoppen
             isFsBusy = true; 
             
             String filename = upload.filename;
@@ -97,12 +96,17 @@ private:
                 uploadFile.close();
                 Serial.print("Upload Ende. Groesse: "); Serial.println(upload.totalSize);
             }
-            
-            // WICHTIG: Display wieder freigeben!
+            // Display freigeben
             isFsBusy = false; 
             
             server.sendHeader("Location", "/");
             server.send(303);
+        } 
+        // SICHERHEIT: Falls Upload abbricht, Ampel wieder auf Grün
+        else if (upload.status == UPLOAD_FILE_ABORTED) {
+            if (uploadFile) uploadFile.close();
+            isFsBusy = false;
+            Serial.println("Upload Aborted");
         }
     }
 
@@ -112,6 +116,8 @@ private:
         if (path.endsWith(".html")) contentType = "text/html";
         else if (path.endsWith(".json")) contentType = "application/json";
         else if (path.endsWith(".bmp")) contentType = "image/bmp";
+        else if (path.endsWith(".png")) contentType = "image/png"; // PNG Support für Download
+
         if (LittleFS.exists(path)) {
             File file = LittleFS.open(path, "r");
             server.streamFile(file, contentType);

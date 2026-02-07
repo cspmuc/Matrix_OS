@@ -20,7 +20,7 @@
 // Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
 std::atomic<int> brightness(150); 
-std::atomic<bool> isFsBusy(false); // NEU: Initialisierung
+std::atomic<bool> isFsBusy(false); 
 
 // Objekte
 DisplayManager display;
@@ -202,27 +202,28 @@ void networkTaskFunction(void * pvParameters) {
   Serial.println("[STATUS] Starting WebInterface...");
   webInterface.begin(); 
 
-  status("Wait for Time...", display.color565(255, 165, 0));
+  // FIX: Nicht mehr in einer Schleife warten!
+  // Wir starten die Services, aber blockieren nicht, wenn NTP/MQTT noch nicht da sind.
+  status("Init Services...", display.color565(255, 165, 0));
   network.tryInitServices();
   
-  while(!network.isTimeSynced()) {
-      network.loop();
-      webInterface.loop(); 
-      delay(100);
-  }
+  // Kurzer Moment für Network Stack
+  delay(500);
 
-  status("Start in 3s", display.color565(255, 255, 255));
+  status("Start...", display.color565(255, 255, 255));
   
   Serial.println("[STATUS] Loading Emojis...");
-  emojiEngine.begin(); // JETZT SICHER WIEDER AKTIVIERT!
+  emojiEngine.begin(); 
 
-  delay(3000);
+  delay(2000);
 
+  // Boot Bildschirm beenden
   if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
     isBooting = false;
     xSemaphoreGive(overlayMutex);
   }
   
+  // Hauptschleife - Hier passiert der Rest (MQTT reconnect, NTP sync im Hintergrund)
   for(;;) {
     network.loop();
     webInterface.loop(); 
@@ -266,11 +267,10 @@ void displayTaskFunction(void * pvParameters) {
 
       display.clear();
       
-      // PRIORITY 1: OTA / UPLOAD
       if (localOta) { 
            display.setFade(1.0); drawOTA(localOtaProg);
       }
-      // HIER IST DER FIX: Wenn Upload läuft, nichts anderes zeichnen!
+      // Upload Anzeige (stoppt Rendering der App)
       else if (isFsBusy) { 
            display.setFade(1.0);
            display.setTextColor(display.color565(0, 0, 255)); // Blau
@@ -312,6 +312,7 @@ void setup() {
   
   status("Boot...");
   
+  // Stack Size 32KB für NetworkTask (Sicher ist sicher für MQTT + WebServer)
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 32000, NULL, 1, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }
