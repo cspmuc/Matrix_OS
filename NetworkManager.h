@@ -37,11 +37,13 @@ private:
 
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
-        // Puffer erhöht auf 1024 Bytes für komplexe Sensor-Seiten
-        StaticJsonDocument<1024> doc;
+        
+        // Puffer großzügig bemessen für Sensor-Listen
+        StaticJsonDocument<2048> doc;
         DeserializationError error = deserializeJson(doc, payload, length);
 
         if (error) {
+             // Fallback: Einfache Strings (z.B. Power CMD ohne JSON)
              String msg = "";
              for (int i = 0; i < length; i++) msg += (char)payload[i];
              if (t == "matrix/cmd/power") {
@@ -52,13 +54,15 @@ private:
              return;
         }
 
+        // --- BEFEHLE ---
+
         // Helligkeit
         if (t == "matrix/cmd/brightness" && doc.containsKey("val")) {
             brightnessRef = doc["val"].as<int>();
             publishState();
         }
         
-        // App Switch
+        // App Umschalten
         if (t == "matrix/cmd/app" && doc.containsKey("app")) {
             String newApp = doc["app"];
             if (newApp == "wordclock") currentAppRef = WORDCLOCK;
@@ -82,15 +86,16 @@ private:
              }
         }
 
-        // --- SENSOR PAGE UPDATE (Das neue Dashboard) ---
-        // Altes "matrix/sensor" wurde entfernt, da inkompatibel!
+        // --- SENSOR DASHBOARD UPDATE ---
         if (t == "matrix/cmd/sensor_page") {
             String id = doc["id"] | "default";
             String title = doc["title"] | "INFO";
             int ttl = doc["ttl"] | 60; 
             
             std::vector<SensorItem> items;
-            JsonArray jsonItems = doc["items"];
+            
+            // Explizite Umwandlung zu Array für Kompatibilität
+            JsonArray jsonItems = doc["items"].as<JsonArray>();
             
             for (JsonObject item : jsonItems) {
                 SensorItem si;
@@ -100,8 +105,10 @@ private:
                 items.push_back(si);
             }
             
-            // Daten an die App übergeben
-            sensorAppRef.updatePage(id, title, ttl, items);
+            // Daten nur speichern, wenn Items vorhanden sind
+            if (!items.empty()) {
+                sensorAppRef.updatePage(id, title, ttl, items);
+            }
         }
     }
 
@@ -123,11 +130,14 @@ public:
         WiFi.setSleep(false);
         if (WiFi.status() == WL_CONNECTED) return true;
         
-        // Versuche Verbindung (kurz)
+        // Kurzer Verbindungsversuch (blockierend für max 1s)
         if (WiFi.status() != WL_CONNECTED) {
              WiFi.mode(WIFI_STA);
              WiFi.begin(ssid, password);
-             delay(1000);
+             unsigned long start = millis();
+             while (WiFi.status() != WL_CONNECTED && millis() - start < 1000) {
+                 delay(10);
+             }
         }
 
         if (WiFi.status() == WL_CONNECTED) {
@@ -182,6 +192,7 @@ public:
 
         unsigned long now = millis();
 
+        // WiFi Reconnect Logik
         if (WiFi.status() != WL_CONNECTED) {
             if (now - lastWifiCheck > 10000) { 
                 lastWifiCheck = now;
@@ -200,12 +211,12 @@ public:
             checkTimeSync();
         }
 
+        // MQTT Reconnect Logik
         if (!client.connected()) {
             if (now - lastMqttRetry > 5000) { 
                 lastMqttRetry = now;
                 if (client.connect("MatrixPortalS3", mqtt_user, mqtt_pass, "matrix/status", 0, true, "OFF")) {
                     client.subscribe("matrix/cmd/#");
-                    // client.subscribe("matrix/sensor"); // VERALTET
                     publishState();
                 }
             }
