@@ -1,0 +1,12 @@
+{
+  "sheets": {
+    "dotto": { "file": "/emojis.bmp", "cols": 16, "rows": 16 }
+  },
+  "icons": {
+    "sun":   { "sheet": "dotto", "index": 0 },
+    "cloud": { "sheet": "dotto", "index": 1 },
+    "smile": { "sheet": "dotto", "index": 2 },
+    "heart": { "sheet": "dotto", "index": 3 },
+    "wifi":  { "sheet": "dotto", "index": 4 }
+  }
+}
