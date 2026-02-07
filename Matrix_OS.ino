@@ -5,7 +5,6 @@
 #include <atomic> 
 #include "config.h"
 
-// Includes
 #include "DisplayManager.h"
 #include "NetworkManager.h"
 #include "WordClockApp.h"
@@ -15,6 +14,7 @@
 #include "PlasmaApp.h"
 #include "RichText.h"
 #include "EmojiEngine.h"
+#include "WebInterface.h" // NEU
 
 // Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
@@ -29,7 +29,9 @@ TestPatternApp appTestPattern;
 SensorApp appSensors;
 TickerApp appTicker;
 PlasmaApp appPlasma;
-EmojiEngine emojiEngine; // Das globale Objekt
+EmojiEngine emojiEngine;
+WebInterface webInterface; // NEU
+
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
 SemaphoreHandle_t overlayMutex; 
@@ -45,13 +47,7 @@ volatile bool otaActive = false;
 volatile int otaProgress = 0;
 
 // --- OVERLAY SYSTEM (Queue) ---
-struct OverlayMessage {
-    String text;
-    int durationSec;
-    String colorName;
-    int scrollSpeed; // NEU: Pixel pro Sekunde
-};
-
+struct OverlayMessage { String text; int durationSec; String colorName; int scrollSpeed; };
 std::deque<OverlayMessage> overlayQueue;
 bool isOverlayActive = false;
 unsigned long overlayStartTime = 0;
@@ -64,7 +60,6 @@ const float fadeStep = 1.0 / ((float)fadeDurationMs / (float)frameDelay);
 
 // --- FUNKTIONEN ---
 
-// NEU: scrollSpeed Parameter übernehmen
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
     if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
         if (overlayQueue.size() < 5) {
@@ -111,20 +106,15 @@ void drawOTA(int progress) {
   display.printCentered(p, 50);
 }
 
-// --- OVERLAY RENDERING MIT SCROLLING ---
 void processAndDrawOverlay(DisplayManager& display) {
     unsigned long now = millis();
-
     if (xSemaphoreTake(overlayMutex, 0) == pdTRUE) { 
         if (isOverlayActive) {
-            if (now > overlayEndTime) {
-                isOverlayActive = false;
-            }
+            if (now > overlayEndTime) isOverlayActive = false;
         }
         if (!isOverlayActive && !overlayQueue.empty()) {
             currentOverlay = overlayQueue.front();
             overlayQueue.pop_front();
-            
             isOverlayActive = true;
             overlayStartTime = now;
             overlayEndTime = now + (currentOverlay.durationSec * 1000);
@@ -134,45 +124,25 @@ void processAndDrawOverlay(DisplayManager& display) {
 
     if (isOverlayActive) {
         String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
-        
         int textW = richTextOverlay.getTextWidth(display, finalMsg, "Medium");
-        
-        int boxH = 34;
-        int boxW = 104; 
-        
+        int boxH = 34; int boxW = 104; 
         bool isScrolling = false;
-        
-        if (textW > (boxW - 10)) {
-            boxW = M_WIDTH; 
-            isScrolling = true;
-        }
-
+        if (textW > (boxW - 10)) { boxW = M_WIDTH; isScrolling = true; }
         int boxX = (M_WIDTH - boxW) / 2;
         int boxY = (M_HEIGHT - boxH) / 2;
 
         display.dimRect(boxX, boxY, boxW, boxH); 
         display.drawRect(boxX, boxY, boxW, boxH, display.color565(80, 80, 80));
-
         int textY = boxY + (boxH / 2) + 5;
-
         if (!isScrolling) {
             richTextOverlay.drawCentered(display, textY, finalMsg, "Medium");
         } else {
-            // SCROLLING LOGIK NEU (Pixel pro Sekunde)
-            float speedPPS = (float)currentOverlay.scrollSpeed; // z.B. 30.0
-            
+            float speedPPS = (float)currentOverlay.scrollSpeed;
             long timePassedMs = now - overlayStartTime;
-            
-            // Berechne Pixel-Offset als Float für mehr Präzision vor dem Runden
-            // (time in sec) * pixels_per_sec
             float pixelsMoved = ((float)timePassedMs / 1000.0f) * speedPPS;
-            
             int startX = boxX + boxW;
-            int totalDist = boxW + textW + 20; 
-            
-            // Modulo math mit int, aber basierend auf präziserem "pixelsMoved"
+            int totalDist = boxW + textW + 20;
             int currentScrollX = startX - ((int)pixelsMoved % totalDist);
-            
             richTextOverlay.drawString(display, currentScrollX, textY, finalMsg, "Medium");
         }
         
@@ -186,7 +156,6 @@ void processAndDrawOverlay(DisplayManager& display) {
 }
 
 // --- TASKS ---
-
 TaskHandle_t NetworkTask;
 TaskHandle_t DisplayTask;
 
@@ -197,6 +166,10 @@ void networkTaskFunction(void * pvParameters) {
           if (network.begin()) {
              String ip = network.getIp();
              status("IP: " + ip, display.color565(0, 255, 0));
+             
+             // WEB INTERFACE STARTEN
+             webInterface.begin();
+             
              delay(2500); 
              break; 
           } else {
@@ -206,19 +179,17 @@ void networkTaskFunction(void * pvParameters) {
       }
 
       status("Wait for Time...", display.color565(255, 165, 0));
-      network.tryInitServices(); 
-      
+      network.tryInitServices();
       bool timeSuccess = false;
       while(!timeSuccess) {
           network.loop();
+          webInterface.loop(); // Webserver am Leben halten
+          
           if (!network.isConnected()) {
               status("WiFi Lost!", display.color565(255, 0, 0));
-              delay(1000);
-              break; 
+              delay(1000); break; 
           }
-          if (network.isTimeSynced()) {
-              timeSuccess = true;
-          }
+          if (network.isTimeSynced()) timeSuccess = true;
           delay(100);
       }
       if (timeSuccess) break;
@@ -234,6 +205,7 @@ void networkTaskFunction(void * pvParameters) {
   
   for(;;) {
     network.loop();
+    webInterface.loop(); // Webserver Loop
     vTaskDelay((otaActive ? 1 : 10) / portTICK_PERIOD_MS);
   }
 }
@@ -241,33 +213,23 @@ void networkTaskFunction(void * pvParameters) {
 void displayTaskFunction(void * pvParameters) {
   AppMode displayedApp = currentApp.load();
   float fadeVal = 1.0;
-
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(frameDelay);
   
   for(;;) {
       int currentBright = brightness.load();
       display.setBrightness(currentBright);
-      
       AppMode targetApp = currentApp.load();
       if (displayedApp != targetApp) {
           fadeVal -= fadeStep;
-          if (fadeVal <= 0.0) {
-              fadeVal = 0.0;
-              displayedApp = targetApp; 
-          }
+          if (fadeVal <= 0.0) { fadeVal = 0.0; displayedApp = targetApp; }
       } else {
-          if (fadeVal < 1.0) {
-              fadeVal += fadeStep;
-              if (fadeVal > 1.0) fadeVal = 1.0;
-          }
+          if (fadeVal < 1.0) { fadeVal += fadeStep; if (fadeVal > 1.0) fadeVal = 1.0; }
       }
       display.setFade(fadeVal);
-
       bool localBooting = false;
       bool localOta = false;
       int localOtaProg = 0;
-
       if (xSemaphoreTake(overlayMutex, 5 / portTICK_PERIOD_MS) == pdTRUE) {
         localBooting = isBooting;
         localOta = otaActive;
@@ -275,33 +237,25 @@ void displayTaskFunction(void * pvParameters) {
         xSemaphoreGive(overlayMutex); 
       }
 
-      display.clear(); 
-
-      if (localOta) {
-           display.setFade(1.0);
-           drawOTA(localOtaProg);
-      }
+      display.clear();
+      if (localOta) { display.setFade(1.0); drawOTA(localOtaProg); }
       else if (localBooting) {
            display.setFade(1.0);
-           if (xSemaphoreTake(overlayMutex, 5)) {
-              drawBootLog();
-              xSemaphoreGive(overlayMutex);
-           }
+           if (xSemaphoreTake(overlayMutex, 5)) { drawBootLog(); xSemaphoreGive(overlayMutex); }
       } 
       else {
            if (currentBright > 0) {
              switch(displayedApp) {
-               case WORDCLOCK:   appWordClock.draw(display);   break;
+               case WORDCLOCK:   appWordClock.draw(display); break;
                case SENSORS:     appSensors.draw(display);     break;
                case TESTPATTERN: appTestPattern.draw(display); break;
                case TICKER:      appTicker.draw(display);      break;
                case PLASMA:      appPlasma.draw(display);      break;
-               case OFF:         /* Clear */                   break;
+               case OFF:         break;
              }
              processAndDrawOverlay(display);
            }
       } 
-      
       display.show();
       vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
@@ -310,11 +264,10 @@ void displayTaskFunction(void * pvParameters) {
 void setup() {
   Serial.begin(115200);
   overlayMutex = xSemaphoreCreateMutex();
-  if (!display.begin()) {
-    while(1);
-  }
-  // Emoji Engine starten (Mountet LittleFS)
-  emojiEngine.begin();
+  if (!display.begin()) while(1);
+  
+  emojiEngine.begin(); // Dateisystem Mounten & Icons laden
+  
   status("Boot...");
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 10000, NULL, 0, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
