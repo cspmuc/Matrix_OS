@@ -14,6 +14,8 @@
 #include "TickerApp.h"
 #include "PlasmaApp.h"
 #include "RichText.h"
+#include "EmojiEngine.h"
+#include "WebInterface.h"
 
 // Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
@@ -28,6 +30,10 @@ TestPatternApp appTestPattern;
 SensorApp appSensors;
 TickerApp appTicker;
 PlasmaApp appPlasma;
+
+// NEU: Engine & Webinterface
+EmojiEngine emojiEngine;
+WebInterface webInterface;
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
@@ -48,7 +54,7 @@ struct OverlayMessage {
     String text;
     int durationSec;
     String colorName;
-    int scrollSpeed; // NEU: Pixel pro Sekunde
+    int scrollSpeed; // Pixel pro Sekunde
 };
 
 std::deque<OverlayMessage> overlayQueue;
@@ -63,7 +69,6 @@ const float fadeStep = 1.0 / ((float)fadeDurationMs / (float)frameDelay);
 
 // --- FUNKTIONEN ---
 
-// NEU: scrollSpeed Parameter übernehmen
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
     if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
         if (overlayQueue.size() < 5) {
@@ -113,7 +118,6 @@ void drawOTA(int progress) {
 // --- OVERLAY RENDERING MIT SCROLLING ---
 void processAndDrawOverlay(DisplayManager& display) {
     unsigned long now = millis();
-
     if (xSemaphoreTake(overlayMutex, 0) == pdTRUE) { 
         if (isOverlayActive) {
             if (now > overlayEndTime) {
@@ -133,16 +137,14 @@ void processAndDrawOverlay(DisplayManager& display) {
 
     if (isOverlayActive) {
         String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
-        
         int textW = richTextOverlay.getTextWidth(display, finalMsg, "Medium");
         
         int boxH = 34;
         int boxW = 104; 
         
         bool isScrolling = false;
-        
         if (textW > (boxW - 10)) {
-            boxW = M_WIDTH; 
+            boxW = M_WIDTH;
             isScrolling = true;
         }
 
@@ -151,27 +153,16 @@ void processAndDrawOverlay(DisplayManager& display) {
 
         display.dimRect(boxX, boxY, boxW, boxH); 
         display.drawRect(boxX, boxY, boxW, boxH, display.color565(80, 80, 80));
-
         int textY = boxY + (boxH / 2) + 5;
-
         if (!isScrolling) {
             richTextOverlay.drawCentered(display, textY, finalMsg, "Medium");
         } else {
-            // SCROLLING LOGIK NEU (Pixel pro Sekunde)
-            float speedPPS = (float)currentOverlay.scrollSpeed; // z.B. 30.0
-            
+            float speedPPS = (float)currentOverlay.scrollSpeed;
             long timePassedMs = now - overlayStartTime;
-            
-            // Berechne Pixel-Offset als Float für mehr Präzision vor dem Runden
-            // (time in sec) * pixels_per_sec
             float pixelsMoved = ((float)timePassedMs / 1000.0f) * speedPPS;
-            
             int startX = boxX + boxW;
-            int totalDist = boxW + textW + 20; 
-            
-            // Modulo math mit int, aber basierend auf präziserem "pixelsMoved"
+            int totalDist = boxW + textW + 20;
             int currentScrollX = startX - ((int)pixelsMoved % totalDist);
-            
             richTextOverlay.drawString(display, currentScrollX, textY, finalMsg, "Medium");
         }
         
@@ -196,6 +187,10 @@ void networkTaskFunction(void * pvParameters) {
           if (network.begin()) {
              String ip = network.getIp();
              status("IP: " + ip, display.color565(0, 255, 0));
+             
+             // NEU: WebInterface starten, sobald WLAN da ist
+             webInterface.begin();
+             
              delay(2500); 
              break; 
           } else {
@@ -205,11 +200,12 @@ void networkTaskFunction(void * pvParameters) {
       }
 
       status("Wait for Time...", display.color565(255, 165, 0));
-      network.tryInitServices(); 
-      
+      network.tryInitServices();
       bool timeSuccess = false;
       while(!timeSuccess) {
           network.loop();
+          webInterface.loop(); // Webserver loop
+
           if (!network.isConnected()) {
               status("WiFi Lost!", display.color565(255, 0, 0));
               delay(1000);
@@ -224,6 +220,10 @@ void networkTaskFunction(void * pvParameters) {
   }
 
   status("Start in 3s", display.color565(255, 255, 255));
+  
+  // NEU: Jetzt Emoji Engine starten (sicher, da FS läuft)
+  emojiEngine.begin();
+
   delay(3000);
 
   if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
@@ -233,6 +233,7 @@ void networkTaskFunction(void * pvParameters) {
   
   for(;;) {
     network.loop();
+    webInterface.loop(); // Webserver loop
     vTaskDelay((otaActive ? 1 : 10) / portTICK_PERIOD_MS);
   }
 }
@@ -247,7 +248,6 @@ void displayTaskFunction(void * pvParameters) {
   for(;;) {
       int currentBright = brightness.load();
       display.setBrightness(currentBright);
-      
       AppMode targetApp = currentApp.load();
       if (displayedApp != targetApp) {
           fadeVal -= fadeStep;
@@ -262,11 +262,9 @@ void displayTaskFunction(void * pvParameters) {
           }
       }
       display.setFade(fadeVal);
-
       bool localBooting = false;
       bool localOta = false;
       int localOtaProg = 0;
-
       if (xSemaphoreTake(overlayMutex, 5 / portTICK_PERIOD_MS) == pdTRUE) {
         localBooting = isBooting;
         localOta = otaActive;
@@ -274,8 +272,7 @@ void displayTaskFunction(void * pvParameters) {
         xSemaphoreGive(overlayMutex); 
       }
 
-      display.clear(); 
-
+      display.clear();
       if (localOta) {
            display.setFade(1.0);
            drawOTA(localOtaProg);

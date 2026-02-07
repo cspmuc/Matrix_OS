@@ -1,6 +1,8 @@
 #pragma once
 #include "DisplayManager.h"
 #include <map>
+#include "EmojiEngine.h"
+extern EmojiEngine emojiEngine; 
 
 // --- FARBEN ---
 #define COL_WHITE      0xFFFF
@@ -54,8 +56,6 @@ struct RenderState {
 
 class RichText {
 private:
-    const uint8_t* iconFont = u8g2_font_unifont_t_symbols;
-
     FontPair getFontByName(String name) {
         if (name.equalsIgnoreCase("Small")) {
             return { u8g2_font_helvR10_tf, u8g2_font_helvB10_tf, -1, 14, 11 };
@@ -110,65 +110,6 @@ private:
         return COL_WHITE;
     }
 
-    String getIconCode(String name) {
-        // --- KLIMA & WETTER ---
-        if (name == "sun")      return "\u2600"; // Sonne
-        if (name == "cloud")    return "\u2601"; // Wolke
-        if (name == "rain")     return "\u2602"; // Regenschirm
-        if (name == "snow")     return "\u2603"; // Schneemann
-        if (name == "zap")      return "\u26A1"; // Blitz
-        
-        // --- FIXES ---
-        if (name == "water")    return "\u2614"; // FIX: Schirm mit Tropfen (vorher Wellen)
-        if (name == "drop")     return "\u2614"; // Schirm mit Tropfen
-        
-        if (name == "co2")      return "\u2622"; // FIX: Radioaktiv (vorher Heiße Quelle)
-        if (name == "gas")      return "\u2622"; // FIX: Radioaktiv
-        if (name == "bio")      return "\u2623"; // Biohazard
-        
-        if (name == "temp")     return "\u263C"; // FIX: Weiße Sonne (vorher °C Symbol)
-        if (name == "flame")    return "\u263C"; // Weiße Sonne als Hitze
-
-        // --- HAUS & LEBEN ---
-        if (name == "house")    return "\u2302"; // Haus
-        if (name == "coffee")   return "\u2615"; // Tasse
-        if (name == "cup")      return "\u2615"; // Tasse
-        if (name == "music")    return "\u266B"; // Note
-        if (name == "heart")    return "\u2665"; // Herz
-        if (name == "star")     return "\u2605"; // Stern
-        
-        // --- TECHNIK & GERÄTE ---
-        if (name == "phone")      return "\u260E"; // Telefon
-        if (name == "smartphone") return "\u260E"; // Telefon
-        if (name == "print")      return "\u2709"; // Brief
-        if (name == "printer")    return "\u2709"; // Brief
-        if (name == "bulb")       return "\u25CF"; // Großer Punkt
-        if (name == "light")      return "\u263C"; // Strahlende Sonne
-        if (name == "wifi")       return "\u260E"; // Telefon als Fallback (Wellen fehlen oft)
-        if (name == "power")      return "\u23E9"; // Fast Forward
-        if (name == "car")        return "\u2638"; // Rad
-        if (name == "battery")    return "\u25A4"; // Quadrat
-        if (name == "gear")       return "\u2699"; // Zahnrad
-        if (name == "switch")     return "\u2611"; // Checkbox
-        if (name == "siren")      return "\u26A0"; // Warndreieck
-        if (name == "stopwatch")  return "\u231B"; // Sanduhr
-
-        // --- PERSONEN ---
-        if (name == "man")      return "\u2642"; // Mars
-        if (name == "woman")    return "\u2640"; // Venus
-        if (name == "person")   return "\u265F"; // Bauer (Schach)
-        if (name == "smile")    return "\u263A"; // Smiley
-
-        // --- PFEILE ---
-        if (name == "arrow_u")  return "\u2191"; 
-        if (name == "arrow_d")  return "\u2193"; 
-        if (name == "arrow_l")  return "\u2190"; 
-        if (name == "arrow_r")  return "\u2192"; 
-        if (name == "check")    return "\u2713"; 
-
-        return "?"; 
-    }
-
     String processTag(DisplayManager& d, String tag, RenderState& state, bool& isIcon) {
         isIcon = false;
         if (tag == "b") { state.bold = !state.bold; return ""; }
@@ -177,16 +118,18 @@ private:
             state.color = getColorByName(d, tag.substring(2)); 
             return ""; 
         }
+        
+        // Wenn kein Format-Tag, dann Emoji-Name
         isIcon = true;
-        return getIconCode(tag);
+        return tag; 
     }
 
     int drawPart(DisplayManager& d, int x, int y, String text, bool isIcon, FontPair fonts, RenderState state) {
         d.setTextColor(state.color);
         if (isIcon) {
-            d.setU8g2Font(iconFont);
-            d.drawString(x, y + fonts.iconOffsetY, text, state.color);
-            return d.getTextWidth(text);
+            // HIER die EmojiEngine aufrufen
+            emojiEngine.drawIcon(d, text, x, y + fonts.iconOffsetY);
+            return 17; // Feste Breite 16px + 1px Abstand
         } else {
             d.setU8g2Font(state.bold ? fonts.bold : fonts.regular);
             d.drawString(x, y, text, state.color);
@@ -198,7 +141,7 @@ private:
 
     int measurePart(DisplayManager& d, String text, bool isIcon, FontPair fonts, bool bold) {
         if (isIcon) {
-            d.setU8g2Font(iconFont);
+            return 17;
         } else {
             d.setU8g2Font(bold ? fonts.bold : fonts.regular);
         }
