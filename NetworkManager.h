@@ -38,12 +38,12 @@ private:
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
         
-        // Puffer großzügig bemessen für Sensor-Listen
+        // Puffer auf 2048 Bytes erhöht für komplexe Sensor-Seiten
         StaticJsonDocument<2048> doc;
         DeserializationError error = deserializeJson(doc, payload, length);
 
         if (error) {
-             // Fallback: Einfache Strings (z.B. Power CMD ohne JSON)
+             // Fallback für einfache Strings (Power CMD)
              String msg = "";
              for (int i = 0; i < length; i++) msg += (char)payload[i];
              if (t == "matrix/cmd/power") {
@@ -54,15 +54,13 @@ private:
              return;
         }
 
-        // --- BEFEHLE ---
-
         // Helligkeit
         if (t == "matrix/cmd/brightness" && doc.containsKey("val")) {
             brightnessRef = doc["val"].as<int>();
             publishState();
         }
         
-        // App Umschalten
+        // App Switch
         if (t == "matrix/cmd/app" && doc.containsKey("app")) {
             String newApp = doc["app"];
             if (newApp == "wordclock") currentAppRef = WORDCLOCK;
@@ -86,7 +84,7 @@ private:
              }
         }
 
-        // --- SENSOR DASHBOARD UPDATE ---
+        // --- SENSOR PAGE UPDATE (Das neue Dashboard) ---
         if (t == "matrix/cmd/sensor_page") {
             String id = doc["id"] | "default";
             String title = doc["title"] | "INFO";
@@ -130,14 +128,11 @@ public:
         WiFi.setSleep(false);
         if (WiFi.status() == WL_CONNECTED) return true;
         
-        // Kurzer Verbindungsversuch (blockierend für max 1s)
+        // Versuche Verbindung (kurz)
         if (WiFi.status() != WL_CONNECTED) {
              WiFi.mode(WIFI_STA);
              WiFi.begin(ssid, password);
-             unsigned long start = millis();
-             while (WiFi.status() != WL_CONNECTED && millis() - start < 1000) {
-                 delay(10);
-             }
+             delay(1000);
         }
 
         if (WiFi.status() == WL_CONNECTED) {
@@ -192,7 +187,6 @@ public:
 
         unsigned long now = millis();
 
-        // WiFi Reconnect Logik
         if (WiFi.status() != WL_CONNECTED) {
             if (now - lastWifiCheck > 10000) { 
                 lastWifiCheck = now;
@@ -211,7 +205,6 @@ public:
             checkTimeSync();
         }
 
-        // MQTT Reconnect Logik
         if (!client.connected()) {
             if (now - lastMqttRetry > 5000) { 
                 lastMqttRetry = now;

@@ -53,7 +53,7 @@ struct OverlayMessage {
 
 std::deque<OverlayMessage> overlayQueue;
 bool isOverlayActive = false;
-unsigned long overlayStartTime = 0; 
+unsigned long overlayStartTime = 0;
 unsigned long overlayEndTime = 0;
 OverlayMessage currentOverlay;
 
@@ -295,7 +295,7 @@ void displayTaskFunction(void * pvParameters) {
                case TESTPATTERN: appTestPattern.draw(display); break;
                case TICKER:      appTicker.draw(display);      break;
                case PLASMA:      appPlasma.draw(display);      break;
-               case OFF:         break;
+               case OFF:         /* Clear */                   break;
              }
              processAndDrawOverlay(display);
            }
