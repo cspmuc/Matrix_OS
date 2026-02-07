@@ -31,7 +31,7 @@ SensorApp appSensors;
 TickerApp appTicker;
 PlasmaApp appPlasma;
 
-// NEU: Engine & Webinterface
+// Engine & Webinterface
 EmojiEngine emojiEngine;
 WebInterface webInterface;
 
@@ -54,7 +54,7 @@ struct OverlayMessage {
     String text;
     int durationSec;
     String colorName;
-    int scrollSpeed; // Pixel pro Sekunde
+    int scrollSpeed;
 };
 
 std::deque<OverlayMessage> overlayQueue;
@@ -188,7 +188,7 @@ void networkTaskFunction(void * pvParameters) {
              String ip = network.getIp();
              status("IP: " + ip, display.color565(0, 255, 0));
              
-             // NEU: WebInterface starten, sobald WLAN da ist
+             // WebInterface starten, sobald WLAN da ist
              webInterface.begin();
              
              delay(2500); 
@@ -204,7 +204,7 @@ void networkTaskFunction(void * pvParameters) {
       bool timeSuccess = false;
       while(!timeSuccess) {
           network.loop();
-          webInterface.loop(); // Webserver loop
+          webInterface.loop(); 
 
           if (!network.isConnected()) {
               status("WiFi Lost!", display.color565(255, 0, 0));
@@ -221,7 +221,7 @@ void networkTaskFunction(void * pvParameters) {
 
   status("Start in 3s", display.color565(255, 255, 255));
   
-  // NEU: Jetzt Emoji Engine starten (sicher, da FS läuft)
+  // Emoji Engine starten (sicher, da FS läuft)
   emojiEngine.begin();
 
   delay(3000);
@@ -233,7 +233,8 @@ void networkTaskFunction(void * pvParameters) {
   
   for(;;) {
     network.loop();
-    webInterface.loop(); // Webserver loop
+    webInterface.loop(); 
+    // WICHTIG: Kleines Delay, damit der Task nicht 100% CPU frisst
     vTaskDelay((otaActive ? 1 : 10) / portTICK_PERIOD_MS);
   }
 }
@@ -311,7 +312,9 @@ void setup() {
   }
   
   status("Boot...");
-  xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 10000, NULL, 0, &NetworkTask, 0);
+  
+  // FIX: Stack Size erhöht auf 20000 (ca 20KB) und Priorität auf 1 (Standard Loop Prio)
+  xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 20000, NULL, 1, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }
 
