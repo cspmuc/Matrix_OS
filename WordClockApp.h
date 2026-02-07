@@ -12,7 +12,8 @@ private:
 public:
     void draw(DisplayManager& display) override {
         struct tm ti;
-        // FIX: Wenn keine Zeit da ist, Info anzeigen statt Blackscreen
+        
+        // Prüfung ob Zeit gültig
         if(!getLocalTime(&ti)) {
             richText.drawCentered(display, 25, "{c:red}Keine Zeit", "Small");
             richText.drawCentered(display, 45, "{c:silver}Warte auf Sync...", "Small");
@@ -54,7 +55,10 @@ public:
         else if (mR == 50) { z1 = cHigh + "zehn";      z2 = cDim + "vor";  z3 = cHigh + s_next; }
         else if (mR == 55) { z1 = cHigh + "fünf";      z2 = cDim + "vor";  z3 = cHigh + s_next; }
 
-        std::vector<String> lines;
+        // Statischer Vektor spart Heap-Allokationen
+        static std::vector<String> lines;
+        lines.clear();
+        
         lines.push_back(z0);
         if (z1 != "") lines.push_back(z1);
         if (z2 != "") lines.push_back(z2);

@@ -202,12 +202,9 @@ void networkTaskFunction(void * pvParameters) {
   Serial.println("[STATUS] Starting WebInterface...");
   webInterface.begin(); 
 
-  // FIX: Nicht mehr in einer Schleife warten!
-  // Wir starten die Services, aber blockieren nicht, wenn NTP/MQTT noch nicht da sind.
   status("Init Services...", display.color565(255, 165, 0));
   network.tryInitServices();
   
-  // Kurzer Moment für Network Stack
   delay(500);
 
   status("Start...", display.color565(255, 255, 255));
@@ -223,7 +220,7 @@ void networkTaskFunction(void * pvParameters) {
     xSemaphoreGive(overlayMutex);
   }
   
-  // Hauptschleife - Hier passiert der Rest (MQTT reconnect, NTP sync im Hintergrund)
+  // Hauptschleife
   for(;;) {
     network.loop();
     webInterface.loop(); 
@@ -270,7 +267,6 @@ void displayTaskFunction(void * pvParameters) {
       if (localOta) { 
            display.setFade(1.0); drawOTA(localOtaProg);
       }
-      // Upload Anzeige (stoppt Rendering der App)
       else if (isFsBusy) { 
            display.setFade(1.0);
            display.setTextColor(display.color565(0, 0, 255)); // Blau
@@ -312,9 +308,11 @@ void setup() {
   
   status("Boot...");
   
-  // Stack Size 32KB für NetworkTask (Sicher ist sicher für MQTT + WebServer)
+  // WICHTIG: NetworkTask 32KB
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 32000, NULL, 1, &NetworkTask, 0);
-  xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
+  
+  // FIX: DisplayTask erhöht auf 20KB (war 10000) um Stack Overflow zu verhindern
+  xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 20000, NULL, 10, &DisplayTask, 1);
 }
 
 void loop() {
