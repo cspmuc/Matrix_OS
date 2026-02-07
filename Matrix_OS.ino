@@ -79,6 +79,9 @@ void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed
 }
 
 void status(const String& msg, uint16_t color = 0xFFFF) {
+  // FIX: Ausgabe auf Serial Monitor hinzufügen!
+  Serial.println("[STATUS] " + msg);
+
   if (overlayMutex && xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
     if (isBooting) {
       char buf[64];
@@ -221,7 +224,7 @@ void networkTaskFunction(void * pvParameters) {
 
   status("Start in 3s", display.color565(255, 255, 255));
   
-  // Emoji Engine starten (sicher, da FS läuft)
+  // Emoji Engine starten
   emojiEngine.begin();
 
   delay(3000);
@@ -306,14 +309,20 @@ void displayTaskFunction(void * pvParameters) {
 
 void setup() {
   Serial.begin(115200);
+  
+  // FIX: Kurz warten, damit USB Serial ready ist
+  delay(2000); 
+  Serial.println("--- MATRIX OS BOOT ---");
+
   overlayMutex = xSemaphoreCreateMutex();
   if (!display.begin()) {
+    Serial.println("Display Init Failed!");
     while(1);
   }
   
   status("Boot...");
   
-  // FIX: Stack Size erhöht auf 20000 (ca 20KB) und Priorität auf 1 (Standard Loop Prio)
+  // FIX: Stack Size explizit auf 20000 gesetzt (sicher ist sicher!)
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 20000, NULL, 1, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }
