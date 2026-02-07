@@ -111,18 +111,46 @@ private:
     }
 
     String getIconCode(String name) {
-        if (name == "sun")      return "\u2600";
-        if (name == "cloud")    return "\u2601";
-        if (name == "rain")     return "\u2602";
-        if (name == "snow")     return "\u2603";
-        if (name == "heart")    return "\u2665";
-        if (name == "star")     return "\u2605";
-        if (name == "arrow_u")  return "\u2191";
-        if (name == "arrow_d")  return "\u2193";
-        if (name == "check")    return "\u2713";
-        if (name == "music")    return "\u266B";
-        if (name == "phone")    return "\u260E";
-        if (name == "smile")    return "\u263A";
+        // --- WETTER ---
+        if (name == "sun")      return "\u2600"; // Sonne
+        if (name == "cloud")    return "\u2601"; // Wolke
+        if (name == "rain")     return "\u2602"; // Regenschirm
+        if (name == "snow")     return "\u2603"; // Schneemann
+        if (name == "moon")     return "\u263D"; // Mondsichel (NEU)
+        if (name == "zap")      return "\u26A1"; // Blitz/Energie (NEU)
+        if (name == "umbrella") return "\u2602"; // Alias für Rain
+
+        // --- UI & STATUS ---
+        if (name == "heart")    return "\u2665"; // Herz
+        if (name == "star")     return "\u2605"; // Stern gefüllt
+        if (name == "star_o")   return "\u2606"; // Stern leer (NEU)
+        if (name == "check")    return "\u2713"; // Haken
+        if (name == "cross")    return "\u2717"; // X (NEU)
+        if (name == "warning")  return "\u26A0"; // Warndreieck (NEU)
+        if (name == "smile")    return "\u263A"; // Smiley
+        if (name == "sad")      return "\u2639"; // Traurig (NEU)
+
+        // --- TECHNIK & TOOLS ---
+        if (name == "phone")    return "\u260E"; // Telefon
+        if (name == "gear")     return "\u2699"; // Zahnrad (NEU)
+        if (name == "tool")     return "\u2692"; // Hammer & Pickel (NEU)
+        if (name == "recycle")  return "\u267B"; // Recycling (NEU)
+        if (name == "anchor")   return "\u2693"; // Anker (NEU)
+
+        // --- LIFESTYLE ---
+        if (name == "music")    return "\u266B"; // Musiknoten
+        if (name == "coffee")   return "\u2615"; // Heißgetränk (NEU)
+        if (name == "soccer")   return "\u26BD"; // Fußball (NEU)
+        if (name == "skull")    return "\u2620"; // Totenkopf (NEU)
+        if (name == "flag")     return "\u2691"; // Schwarze Flagge (NEU)
+
+        // --- PFEILE ---
+        if (name == "arrow_u")  return "\u2191"; // Hoch
+        if (name == "arrow_d")  return "\u2193"; // Runter
+        if (name == "arrow_l")  return "\u2190"; // Links (NEU)
+        if (name == "arrow_r")  return "\u2192"; // Rechts (NEU)
+        if (name == "arrow_dbl") return "\u2194"; // Links-Rechts (NEU)
+
         return "?"; 
     }
 

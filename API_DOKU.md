@@ -3,7 +3,6 @@
 ## Fonts
 https://github.com/olikraus/u8g2/wiki/fntlistall
 
-
 Diese Datei dient als Schnellanleitung für die MQTT-Steuerung und die Text-Formatierung.
 
 ---
@@ -15,12 +14,12 @@ Diese Datei dient als Schnellanleitung für die MQTT-Steuerung und die Text-Form
 * **Topic:** `matrix/cmd/app`
 * **Payload (JSON):** `{"app": "APPNAME"}`
 * **Mögliche Apps:**
-    * `wordclock` (Standard)
-    * `sensors` (Wetter/Temp Anzeige)
+    * `wordclock` (Standard, Wortuhr)
+    * `sensors` (Dashboard für Sensor-Seiten)
     * `ticker` (Lauftext Demo)
     * `plasma` (Bunter Hintergrund)
     * `testpattern` (Pixel Test)
-    * `off` (Display schwarz, aber WLAN aktiv)
+    * `off` (Display schwarz, WLAN bleibt aktiv)
 
 ### Helligkeit
 * **Topic:** `matrix/cmd/brightness`
@@ -30,9 +29,26 @@ Diese Datei dient als Schnellanleitung für die MQTT-Steuerung und die Text-Form
 * **Topic:** `matrix/cmd/power`
 * **Payload (String):** `ON` oder `OFF`
 
-### Sensor Daten senden (für SensorApp)
-* **Topic:** `matrix/sensor`
-* **Payload (JSON):** `{"temp": "22.5", "hum": "45"}`
+### Sensor Dashboard (SensorApp)
+Das System unterstützt mehrere Seiten, die automatisch rotieren.
+* **Topic:** `matrix/cmd/sensor_page`
+* **Payload (JSON):**
+    ```json
+    {
+      "id": "wohnzimmer",       // Eindeutige ID (Überschreibt existierende Seite)
+      "title": "RAUMKLIMA",     // Überschrift der Seite
+      "ttl": 60,                // Lebensdauer in Sekunden (Seite wird gelöscht wenn keine Updates kommen)
+      "items": [                // Liste der Werte (1 bis 4 Stück)
+        { "icon": "sun",  "text": "22.5°C", "color": "white" },
+        { "icon": "rain", "text": "45%",    "color": "blue" }
+      ]
+    }
+    ```
+* **Layout-Automatik:**
+    * **1 Item:** Große Darstellung (Big Mode).
+    * **2 Items:** Liste untereinander (List Mode).
+    * **3-4 Items:** Raster (Grid Mode).
+* **Rotation:** Sende Nachrichten mit *unterschiedlichen* `id`s (z.B. "innen", "aussen"), um mehrere Seiten anzulegen. Das Display wechselt alle 5 Sekunden durch.
 
 ### Overlay / Benachrichtigung
 Zeigt eine Nachricht über der aktuellen App an (mit "Glass-Effekt").
@@ -46,9 +62,9 @@ Zeigt eine Nachricht über der aktuellen App an (mit "Glass-Effekt").
       "speed": 30                // (Optional) Scroll-Speed in Pixel/Sekunde (Standard: 30)
     }
     ```
-* **Hinweis:** * Kurzer Text = Zentrierte Box.
+* **Hinweis:**
+    * Kurzer Text = Zentrierte Box.
     * Langer Text = Automatischer Lauftext (Banner).
-    * Warteschlange: Max. 5 Nachrichten werden gepuffert.
 
 ---
 
@@ -69,46 +85,43 @@ Diese Tags können in **allen** Texten (Overlay, SensorApp, Ticker) verwendet we
 * `{u}` = _Unterstrichen_ (Umschalter an/aus)
 
 ### Farben `{c:NAME}`
-* **Premium:** `gold`, `silver`
-* **UI:** `highlight` (Orange), `warn` (Rot), `success` (Grün), `info` (Blau), `muted` (Grau)
-* **Standard:** `white`, `red`, `green`, `blue`
-* **Wetter:** `warm` (Gelb-Orange), `cold` (Eisblau)
-* **Hex-Code:** `{c:#FF00FF}` (Benutzerdefiniert)
+
+**Neon (Knallig):**
+* `pink`, `cyan`, `lime`, `purple`, `orange`, `magenta`
+
+**Pastell (Soft):**
+* `rose`, `sky`, `mint`, `lavender`, `peach`, `lemon`
+
+**Standard & UI:**
+* `white`, `red`, `green`, `blue`
+* `highlight` (Orange), `warn` (Rot), `success` (Grün), `info` (Blau), `muted` (Dunkelgrau)
+* `gold`, `silver` (Premium-Look)
+* `warm` (Gelb-Orange), `cold` (Eisblau)
+
+**Benutzerdefiniert:**
+* `{c:#FF00FF}` (Hex-Code)
 
 ### Icons `{NAME}`
 * **Wetter:** `sun`, `cloud`, `rain`, `snow`
 * **Symbole:** `heart`, `star`, `check`, `smile`
 * **Misc:** `music`, `phone`, `arrow_u` (Hoch), `arrow_d` (Runter)
 
-### Schriftgrößen (Intern)
-Wenn im Code Schriftgrößen verlangt werden:
-* `"Small"` = Helvetica 10 (ca. 14px Zeilenhöhe)
-* `"Medium"` = Helvetica 12 (ca. 16px Zeilenhöhe)
-* `"Large"` = Helvetica 18 (ca. 24px Zeilenhöhe)
-
-
-Name,Symbol,Unicode,Beschreibung
-Wetter,,,
-sun,☀,\u2600,Sonne (Black Sun with Rays)
-cloud,☁,\u2601,Wolke
-rain,☂,\u2602,Regenschirm
-snow,☃,\u2603,Schneemann
-UI & Status,,,
-heart,♥,\u2665,Herz (Black Heart Suit)
-star,★,\u2605,Stern (Black Star)
-check,✓,\u2713,Häkchen
-smile,☺,\u263A,Smiley (White Smiling Face)
-Misc,,,
-music,♫,\u266B,Musiknoten (Beamed Eighth Notes)
-phone,☎,\u260E,Telefon (Black Telephone)
-arrow_u,↑,\u2191,Pfeil nach oben
-arrow_d,↓,\u2193,Pfeil nach unten
-
 ---
 
 ## 4. Beispiele
-**Klingel-Benachrichtigung (Home Assistant):**
-`{"msg": "{c:gold}Es klingelt! {u}Tür{u} öffnen? {smile}", "duration": 8}`
 
-**Müll-Erinnerung:**
-`{"msg": "Morgen: {c:blue}Papiertonne {c:white}rausstellen!", "color": "info"}`
+**Home Assistant Automation (Sensor Page):**
+```yaml
+action: mqtt.publish
+data:
+  topic: matrix/cmd/sensor_page
+  payload: >-
+    {
+      "id": "klima",
+      "title": "WOHNZIMMER",
+      "ttl": 120,
+      "items": [
+        { "icon": "sun", "text": "{{ states('sensor.temp') }}°C", "color": "white" },
+        { "icon": "cloud", "text": "{{ states('sensor.co2') }} ppm", "color": "{% if states('sensor.co2')|int > 1000 %}warn{% else %}mint{% endif %}" }
+      ]
+    }
