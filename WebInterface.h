@@ -8,7 +8,7 @@ private:
     WebServer server;
     bool active = false;
     bool fsMounted = false;
-    File uploadFile; // WICHTIG: Globales Handle, damit die Datei offen bleibt
+    File uploadFile; 
 
 public:
     WebInterface() : server(80) {}
@@ -27,7 +27,7 @@ public:
             handleFileList();
         });
 
-        // OPTIMIERTER UPLOAD HANDLER
+        // UPLOAD HANDLER
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/plain", "OK"); 
         }, [this]() {
@@ -78,25 +78,29 @@ private:
         HTTPUpload& upload = server.upload();
         
         if (upload.status == UPLOAD_FILE_START) {
+            // WICHTIG: Display stoppen!
+            isFsBusy = true; 
+            
             String filename = upload.filename;
             if (!filename.startsWith("/")) filename = "/" + filename;
             Serial.print("Upload Start: "); Serial.println(filename);
             
-            // Datei EINMAL öffnen (Write Mode überschreibt)
             uploadFile = LittleFS.open(filename, "w");
             
         } else if (upload.status == UPLOAD_FILE_WRITE) {
-            // In die offene Datei schreiben
             if (uploadFile) {
                 uploadFile.write(upload.buf, upload.currentSize);
             }
             
         } else if (upload.status == UPLOAD_FILE_END) {
-            // Erst am Ende schließen
             if (uploadFile) {
                 uploadFile.close();
                 Serial.print("Upload Ende. Groesse: "); Serial.println(upload.totalSize);
             }
+            
+            // WICHTIG: Display wieder freigeben!
+            isFsBusy = false; 
+            
             server.sendHeader("Location", "/");
             server.send(303);
         }

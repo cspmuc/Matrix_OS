@@ -20,6 +20,7 @@
 // Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
 std::atomic<int> brightness(150); 
+std::atomic<bool> isFsBusy(false); // NEU: Initialisierung
 
 // Objekte
 DisplayManager display;
@@ -79,7 +80,6 @@ void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed
 }
 
 void status(const String& msg, uint16_t color = 0xFFFF) {
-  // Debug Ausgabe auf Serial erzwingen
   Serial.println("[STATUS] " + msg);
 
   if (overlayMutex && xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
@@ -184,45 +184,37 @@ TaskHandle_t NetworkTask;
 TaskHandle_t DisplayTask;
 
 void networkTaskFunction(void * pvParameters) {
-  // 1. WiFi Verbindung aufbauen (oder prüfen)
   status("Connect WiFi...", display.color565(255, 255, 255));
   
   if (!network.isConnected()) {
-      network.begin(); // Startet Verbindungsprozess
+      network.begin(); 
   }
 
-  // Warten bis wirklich verbunden
   while(!network.isConnected()) {
       status("WiFi Retry...", display.color565(255, 0, 0));
       delay(1000);
-      network.begin(); // Retry
+      network.begin(); 
   }
 
-  // 2. WICHTIG: Services starten (JETZT erst, wo wir sicher verbunden sind)
-  // Das WebInterface muss bedingungslos starten, egal ob WiFi schon da war oder nicht.
   String ip = network.getIp();
   status("IP: " + ip, display.color565(0, 255, 0));
   
   Serial.println("[STATUS] Starting WebInterface...");
-  webInterface.begin(); // Startet Server & LittleFS
+  webInterface.begin(); 
 
-  // 3. Zeit & OTA Services
   status("Wait for Time...", display.color565(255, 165, 0));
   network.tryInitServices();
   
-  // Warten auf Zeit-Sync
   while(!network.isTimeSynced()) {
       network.loop();
       webInterface.loop(); 
       delay(100);
   }
 
-  // 4. Emojis laden
   status("Start in 3s", display.color565(255, 255, 255));
   
-  // Falls LittleFS noch formatiert wird, sehen wir das hier im Log
   Serial.println("[STATUS] Loading Emojis...");
-  emojiEngine.begin(); 
+  emojiEngine.begin(); // JETZT SICHER WIEDER AKTIVIERT!
 
   delay(3000);
 
@@ -231,7 +223,6 @@ void networkTaskFunction(void * pvParameters) {
     xSemaphoreGive(overlayMutex);
   }
   
-  // 5. Hauptschleife
   for(;;) {
     network.loop();
     webInterface.loop(); 
@@ -274,16 +265,20 @@ void displayTaskFunction(void * pvParameters) {
       }
 
       display.clear();
-      if (localOta) {
+      
+      // PRIORITY 1: OTA / UPLOAD
+      if (localOta) { 
+           display.setFade(1.0); drawOTA(localOtaProg);
+      }
+      // HIER IST DER FIX: Wenn Upload läuft, nichts anderes zeichnen!
+      else if (isFsBusy) { 
            display.setFade(1.0);
-           drawOTA(localOtaProg);
+           display.setTextColor(display.color565(0, 0, 255)); // Blau
+           display.printCentered("UPLOADING...", 25);
       }
       else if (localBooting) {
            display.setFade(1.0);
-           if (xSemaphoreTake(overlayMutex, 5)) {
-              drawBootLog();
-              xSemaphoreGive(overlayMutex);
-           }
+           if (xSemaphoreTake(overlayMutex, 5)) { drawBootLog(); xSemaphoreGive(overlayMutex); }
       } 
       else {
            if (currentBright > 0) {
@@ -306,8 +301,6 @@ void displayTaskFunction(void * pvParameters) {
 
 void setup() {
   Serial.begin(115200);
-  
-  // Warten auf USB Serial
   delay(2000);
   Serial.println("--- MATRIX OS BOOT ---");
 
@@ -319,8 +312,7 @@ void setup() {
   
   status("Boot...");
   
-  // WICHTIG: Stack Size 20000 (20KB) damit WebServer + MQTT Platz haben
-  xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 20000, NULL, 1, &NetworkTask, 0);
+  xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 32000, NULL, 1, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }
 

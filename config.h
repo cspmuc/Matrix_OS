@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include <atomic> // NEU: Für Thread-Sicherheit
+#include <atomic> 
 #include "secrets.h"
 
 // --- WLAN & MQTT ---
@@ -44,6 +44,9 @@ const int   daylightOffset_sec = 3600;
 // App Definitionen
 enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, OFF };
 
-// WICHTIG: Externals müssen jetzt atomic sein
+// GLOBALE STEUERUNG
 extern std::atomic<AppMode> currentApp;
 extern std::atomic<int> brightness;
+
+// NEU: Verhindert Crashs bei gleichzeitigem Dateizugriff
+extern std::atomic<bool> isFsBusy;
