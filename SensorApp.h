@@ -57,33 +57,33 @@ public:
     void draw(DisplayManager& display) override {
         unsigned long now = millis();
 
-        // 1. GARBAGE COLLECTION (CRITICAL FIX)
+        // 1. GARBAGE COLLECTION
         auto it = pages.begin();
         while (it != pages.end()) {
             // Wenn TTL abgelaufen (TTL * 1000 ms)
             if (now - it->second.lastReceived > (it->second.ttl * 1000)) {
                 
-                // Prüfen, ob wir gerade die Seite löschen, die wir anzeigen
                 bool isCurrent = (it == currentPageIt);
                 
-                // Löschen und Iterator auf das NÄCHSTE Element setzen
+                // WICHTIG: it wird VOR dem Zugriff aktualisiert
                 it = pages.erase(it); 
                 
-                // Wenn die aktive Seite gelöscht wurde, müssen wir den Anzeige-Zeiger retten
+                // Wenn die aktive Seite gelöscht wurde, Zeiger korrigieren
                 if (isCurrent) {
-                    currentPageIt = it; // Zeige auf das nächste Element (oder end)
+                    currentPageIt = it;
                     if (currentPageIt == pages.end()) {
-                        currentPageIt = pages.begin(); // Wrap around zum Anfang
+                        currentPageIt = pages.begin();
                     }
                 }
             } else {
-                ++it; // Nur weitergehen, wenn wir NICHT gelöscht haben
+                ++it;
             }
         }
 
         // Wenn keine Seiten da sind -> Leermeldung
         if (pages.empty()) {
-            richText.drawCentered(display, 35, "{c:muted}No Sensor Data", "Small");
+            // Y=39 ist die neue optische Mitte
+            richText.drawCentered(display, 39, "{c:muted}No Sensor Data", "Small");
             return;
         }
 
@@ -119,23 +119,26 @@ public:
 private:
     void drawPage(DisplayManager& display, SensorPage& p) {
         // --- HEADER ---
-        display.drawFastHLine(0, 13, M_WIDTH, display.color565(50, 50, 50));
-        richText.drawCentered(display, 10, "{c:silver}" + p.title, "Small");
+        // KORREKTUR: Zurück auf 12 (Perfekt für Umlaute)
+        richText.drawCentered(display, 12, "{c:silver}" + p.title, "Small");
+        // KORREKTUR: Zurück auf 15
+        display.drawFastHLine(0, 15, M_WIDTH, display.color565(50, 50, 50));
 
-        // --- CONTENT ---
+        // --- CONTENT (Bleibt tiefer) ---
         
-        // LAYOUT 1: SINGLE BIG (Ein riesiger Wert)
+        // LAYOUT 1: SINGLE BIG
         if (p.layoutType == 1 && p.items.size() > 0) {
             SensorItem& item = p.items[0];
             String content = "{c:" + item.color + "}";
             if(item.icon != "") content += "{" + item.icon + "} ";
             content += "{b}" + item.text;
-            richText.drawCentered(display, 42, content, "Large");
+            // Baseline 47 (Tiefer als ursprünglich 46)
+            richText.drawCentered(display, 47, content, "Large");
         }
         
-        // LAYOUT 2: LIST (2 Zeilen untereinander)
+        // LAYOUT 2: LIST
         else if (p.layoutType == 2) {
-            int yPos = 30;
+            int yPos = 33; // Start auf 33 (Tiefer als ursprünglich 32)
             for (const auto& item : p.items) {
                 String content = "{c:" + item.color + "}";
                 if(item.icon != "") content += "{" + item.icon + "} ";
@@ -145,7 +148,7 @@ private:
             }
         }
         
-        // LAYOUT 4: GRID (2x2 Raster)
+        // LAYOUT 4: GRID
         else {
             int i = 0;
             for (const auto& item : p.items) {
@@ -155,7 +158,8 @@ private:
                 int col = i % 2;
                 
                 int xBase = col * 64; 
-                int yBase = 28 + (row * 22); 
+                // Start Y auf 31 (Tiefer als ursprünglich 30)
+                int yBase = 31 + (row * 22); 
                 
                 String content = "{c:" + item.color + "}";
                 if(item.icon != "") content += "{" + item.icon + "} ";
