@@ -38,7 +38,7 @@ private:
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
         
-        // Puffer auf 2048 Bytes erhöht für komplexe Sensor-Seiten
+        // JSON Puffer
         StaticJsonDocument<2048> doc;
         DeserializationError error = deserializeJson(doc, payload, length);
 
@@ -84,7 +84,7 @@ private:
              }
         }
 
-        // --- SENSOR PAGE UPDATE (Das neue Dashboard) ---
+        // --- SENSOR PAGE UPDATE ---
         if (t == "matrix/cmd/sensor_page") {
             String id = doc["id"] | "default";
             String title = doc["title"] | "INFO";
@@ -92,7 +92,6 @@ private:
             
             std::vector<SensorItem> items;
             
-            // Explizite Umwandlung zu Array für Kompatibilität
             JsonArray jsonItems = doc["items"].as<JsonArray>();
             
             for (JsonObject item : jsonItems) {
@@ -103,7 +102,6 @@ private:
                 items.push_back(si);
             }
             
-            // Daten nur speichern, wenn Items vorhanden sind
             if (!items.empty()) {
                 sensorAppRef.updatePage(id, title, ttl, items);
             }
@@ -128,7 +126,6 @@ public:
         WiFi.setSleep(false);
         if (WiFi.status() == WL_CONNECTED) return true;
         
-        // Versuche Verbindung (kurz)
         if (WiFi.status() != WL_CONNECTED) {
              WiFi.mode(WIFI_STA);
              WiFi.begin(ssid, password);
@@ -158,6 +155,10 @@ public:
         if (!mqttInitialized) { 
             client.setServer(mqtt_server, mqtt_port);
             client.setCallback(mqttCallbackTrampoline);
+            
+            // --- WICHTIGER FIX: BUFFER ERHÖHEN ---
+            client.setBufferSize(2048); // Standard ist oft nur 256
+            
             mqttInitialized = true;
         }
     }
