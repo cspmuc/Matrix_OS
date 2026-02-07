@@ -23,20 +23,20 @@
 #define COL_SILVER     0x9492 
 
 // --- NEUE NEON PALETTE ---
-#define COL_NEON_PINK   0xF81F  // Knalliges Magenta/Pink
-#define COL_NEON_CYAN   0x07FF  // Helles Türkis/Cyan
-#define COL_NEON_GREEN  0x07E0  // Reines Grün
-#define COL_PURPLE      0x780F  // Lila
-#define COL_ORANGE      0xFD20  // Orange (wie Highlight)
-#define COL_MAGENTA     0xF81F  // Klassisches Magenta
+#define COL_NEON_PINK   0xF81F  
+#define COL_NEON_CYAN   0x07FF  
+#define COL_NEON_GREEN  0x07E0  
+#define COL_PURPLE      0x780F  
+#define COL_ORANGE      0xFD20  
+#define COL_MAGENTA     0xF81F  
 
 // --- SOFT PALETTE (Pastell) ---
-#define COL_SOFT_ROSE     0xFDB8  // Zartes Rosa
-#define COL_SOFT_SKY      0x867D  // Himmelblau (SkyBlue)
-#define COL_SOFT_MINT     0x9FF3  // Mintgrün
-#define COL_SOFT_LAVENDER 0xE73F  // Lavendel / Flieder
-#define COL_SOFT_PEACH    0xFED6  // Pfirsich / Hautton
-#define COL_SOFT_LEMON    0xFFF4  // Helles Zitronengelb
+#define COL_SOFT_ROSE     0xFDB8  
+#define COL_SOFT_SKY      0x867D  
+#define COL_SOFT_MINT     0x9FF3  
+#define COL_SOFT_LAVENDER 0xE73F  
+#define COL_SOFT_PEACH    0xFED6  
+#define COL_SOFT_LEMON    0xFFF4  
 
 struct FontPair {
     const uint8_t* regular;
@@ -111,45 +111,60 @@ private:
     }
 
     String getIconCode(String name) {
-        // --- WETTER ---
+        // --- KLIMA & WETTER ---
         if (name == "sun")      return "\u2600"; // Sonne
         if (name == "cloud")    return "\u2601"; // Wolke
         if (name == "rain")     return "\u2602"; // Regenschirm
         if (name == "snow")     return "\u2603"; // Schneemann
-        if (name == "moon")     return "\u263D"; // Mondsichel (NEU)
-        if (name == "zap")      return "\u26A1"; // Blitz/Energie (NEU)
-        if (name == "umbrella") return "\u2602"; // Alias für Rain
+        if (name == "zap")      return "\u26A1"; // Blitz
+        
+        // --- FIXES ---
+        if (name == "water")    return "\u2614"; // FIX: Schirm mit Tropfen (vorher Wellen)
+        if (name == "drop")     return "\u2614"; // Schirm mit Tropfen
+        
+        if (name == "co2")      return "\u2622"; // FIX: Radioaktiv (vorher Heiße Quelle)
+        if (name == "gas")      return "\u2622"; // FIX: Radioaktiv
+        if (name == "bio")      return "\u2623"; // Biohazard
+        
+        if (name == "temp")     return "\u263C"; // FIX: Weiße Sonne (vorher °C Symbol)
+        if (name == "flame")    return "\u263C"; // Weiße Sonne als Hitze
 
-        // --- UI & STATUS ---
+        // --- HAUS & LEBEN ---
+        if (name == "house")    return "\u2302"; // Haus
+        if (name == "coffee")   return "\u2615"; // Tasse
+        if (name == "cup")      return "\u2615"; // Tasse
+        if (name == "music")    return "\u266B"; // Note
         if (name == "heart")    return "\u2665"; // Herz
-        if (name == "star")     return "\u2605"; // Stern gefüllt
-        if (name == "star_o")   return "\u2606"; // Stern leer (NEU)
-        if (name == "check")    return "\u2713"; // Haken
-        if (name == "cross")    return "\u2717"; // X (NEU)
-        if (name == "warning")  return "\u26A0"; // Warndreieck (NEU)
+        if (name == "star")     return "\u2605"; // Stern
+        
+        // --- TECHNIK & GERÄTE ---
+        if (name == "phone")      return "\u260E"; // Telefon
+        if (name == "smartphone") return "\u260E"; // Telefon
+        if (name == "print")      return "\u2709"; // Brief
+        if (name == "printer")    return "\u2709"; // Brief
+        if (name == "bulb")       return "\u25CF"; // Großer Punkt
+        if (name == "light")      return "\u263C"; // Strahlende Sonne
+        if (name == "wifi")       return "\u260E"; // Telefon als Fallback (Wellen fehlen oft)
+        if (name == "power")      return "\u23E9"; // Fast Forward
+        if (name == "car")        return "\u2638"; // Rad
+        if (name == "battery")    return "\u25A4"; // Quadrat
+        if (name == "gear")       return "\u2699"; // Zahnrad
+        if (name == "switch")     return "\u2611"; // Checkbox
+        if (name == "siren")      return "\u26A0"; // Warndreieck
+        if (name == "stopwatch")  return "\u231B"; // Sanduhr
+
+        // --- PERSONEN ---
+        if (name == "man")      return "\u2642"; // Mars
+        if (name == "woman")    return "\u2640"; // Venus
+        if (name == "person")   return "\u265F"; // Bauer (Schach)
         if (name == "smile")    return "\u263A"; // Smiley
-        if (name == "sad")      return "\u2639"; // Traurig (NEU)
-
-        // --- TECHNIK & TOOLS ---
-        if (name == "phone")    return "\u260E"; // Telefon
-        if (name == "gear")     return "\u2699"; // Zahnrad (NEU)
-        if (name == "tool")     return "\u2692"; // Hammer & Pickel (NEU)
-        if (name == "recycle")  return "\u267B"; // Recycling (NEU)
-        if (name == "anchor")   return "\u2693"; // Anker (NEU)
-
-        // --- LIFESTYLE ---
-        if (name == "music")    return "\u266B"; // Musiknoten
-        if (name == "coffee")   return "\u2615"; // Heißgetränk (NEU)
-        if (name == "soccer")   return "\u26BD"; // Fußball (NEU)
-        if (name == "skull")    return "\u2620"; // Totenkopf (NEU)
-        if (name == "flag")     return "\u2691"; // Schwarze Flagge (NEU)
 
         // --- PFEILE ---
-        if (name == "arrow_u")  return "\u2191"; // Hoch
-        if (name == "arrow_d")  return "\u2193"; // Runter
-        if (name == "arrow_l")  return "\u2190"; // Links (NEU)
-        if (name == "arrow_r")  return "\u2192"; // Rechts (NEU)
-        if (name == "arrow_dbl") return "\u2194"; // Links-Rechts (NEU)
+        if (name == "arrow_u")  return "\u2191"; 
+        if (name == "arrow_d")  return "\u2193"; 
+        if (name == "arrow_l")  return "\u2190"; 
+        if (name == "arrow_r")  return "\u2192"; 
+        if (name == "check")    return "\u2713"; 
 
         return "?"; 
     }
