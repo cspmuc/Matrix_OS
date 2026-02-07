@@ -116,14 +116,19 @@ private:
 
     String processTag(DisplayManager& d, String tag, RenderState& state, bool& isIcon) {
         isIcon = false;
+        // Formatierung fett/unterstrichen
         if (tag == "b") { state.bold = !state.bold; return ""; }
         if (tag == "u") { state.underlined = !state.underlined; return ""; }
+        
+        // Farben
         if (tag.startsWith("c:")) { 
             state.color = getColorByName(d, tag.substring(2)); 
             return ""; 
         }
+
+        // Wenn es kein Format-Tag ist, muss es ein Icon sein!
         isIcon = true;
-        return getIconCode(tag);
+        return tag; // WICHTIG: Gib einfach den Namen zurück (z.B. "smile")
     }
 
     int drawPart(DisplayManager& d, int x, int y, String text, bool isIcon, FontPair fonts, RenderState state) {
