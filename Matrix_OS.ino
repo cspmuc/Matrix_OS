@@ -14,6 +14,7 @@
 #include "TickerApp.h"
 #include "PlasmaApp.h"
 #include "RichText.h"
+#include "EmojiEngine.h"
 
 // Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
@@ -28,7 +29,7 @@ TestPatternApp appTestPattern;
 SensorApp appSensors;
 TickerApp appTicker;
 PlasmaApp appPlasma;
-
+EmojiEngine emojiEngine; // Das globale Objekt
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
 SemaphoreHandle_t overlayMutex; 
@@ -312,7 +313,8 @@ void setup() {
   if (!display.begin()) {
     while(1);
   }
-  
+  // Emoji Engine starten (Mountet LittleFS)
+  emojiEngine.begin();
   status("Boot...");
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 10000, NULL, 0, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
