@@ -22,6 +22,22 @@
 #define COL_GOLD       0xFEA0 
 #define COL_SILVER     0x9492 
 
+// --- NEUE NEON PALETTE ---
+#define COL_NEON_PINK   0xF81F  // Knalliges Magenta/Pink
+#define COL_NEON_CYAN   0x07FF  // Helles Türkis/Cyan
+#define COL_NEON_GREEN  0x07E0  // Reines Grün
+#define COL_PURPLE      0x780F  // Lila
+#define COL_ORANGE      0xFD20  // Orange (wie Highlight)
+#define COL_MAGENTA     0xF81F  // Klassisches Magenta
+
+// --- SOFT PALETTE (Pastell) ---
+#define COL_SOFT_ROSE     0xFDB8  // Zartes Rosa
+#define COL_SOFT_SKY      0x867D  // Himmelblau (SkyBlue)
+#define COL_SOFT_MINT     0x9FF3  // Mintgrün
+#define COL_SOFT_LAVENDER 0xE73F  // Lavendel / Flieder
+#define COL_SOFT_PEACH    0xFED6  // Pfirsich / Hautton
+#define COL_SOFT_LEMON    0xFFF4  // Helles Zitronengelb
+
 struct FontPair {
     const uint8_t* regular;
     const uint8_t* bold;
@@ -77,6 +93,20 @@ private:
         if (name == "gold")      return COL_GOLD;
         if (name == "silver")    return COL_SILVER;
         
+        if (name == "pink")      return COL_NEON_PINK;
+        if (name == "cyan")      return COL_NEON_CYAN;
+        if (name == "lime")      return COL_NEON_GREEN;
+        if (name == "purple")    return COL_PURPLE;
+        if (name == "orange")    return COL_ORANGE;
+        if (name == "magenta")   return COL_MAGENTA;
+        
+        if (name == "rose")      return COL_SOFT_ROSE;
+        if (name == "sky")       return COL_SOFT_SKY;
+        if (name == "mint")      return COL_SOFT_MINT;
+        if (name == "lavender")  return COL_SOFT_LAVENDER;
+        if (name == "peach")     return COL_SOFT_PEACH;
+        if (name == "lemon")     return COL_SOFT_LEMON;
+
         return COL_WHITE;
     }
 

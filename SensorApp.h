@@ -120,7 +120,7 @@ private:
     void drawPage(DisplayManager& display, SensorPage& p) {
         // --- HEADER ---
         // KORREKTUR: Zurück auf 12 (Perfekt für Umlaute)
-        richText.drawCentered(display, 12, "{c:silver}" + p.title, "Small");
+        richText.drawCentered(display, 12, "{c:peach}" + p.title, "Small");
         // KORREKTUR: Zurück auf 15
         display.drawFastHLine(0, 15, M_WIDTH, display.color565(50, 50, 50));
 
