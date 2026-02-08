@@ -3,13 +3,14 @@
 #include <LittleFS.h>
 #include "config.h"
 
-// WICHTIG: Zugriff auf die neue Overlay-Funktion
+// Zugriff auf Overlay und Display
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern DisplayManager display; 
 
 class WebManager {
 private:
     WebServer server;
+    File uploadFile; // Datei-Handle bleibt offen
 
 public:
     WebManager() : server(80) {}
@@ -43,21 +44,19 @@ public:
             server.send(200, "text/html", html);
         });
 
-        // 2. Upload Handler mit Overlay-Feedback
+        // 2. Upload Handler (OPTIMIERT & KORRIGIERT)
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
-            
-            // ERFOLG: Zeige "Done" in Grün für 3 Sekunden
-            forceOverlay("Upload Done", 3, "success"); // "success" ist Grün (siehe RichText)
+            forceOverlay("Upload Done", 3, "success"); 
             Serial.println("Web: Upload finished.");
             
         }, [this]() { 
             HTTPUpload& upload = server.upload();
             
+            // --- START: Datei öffnen ---
             if (upload.status == UPLOAD_FILE_START) {
-                // START: Speicher Check
                 size_t freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
-                if (freeSpace < 10000) {
+                if (freeSpace < 10000) { 
                      Serial.println("Storage Full! Aborting.");
                      forceOverlay("Disk Full!", 5, "warn");
                      return; 
@@ -67,24 +66,34 @@ public:
                 if(!filename.startsWith("/")) filename = "/" + filename;
                 
                 Serial.print("Web: Upload Start: "); Serial.println(filename);
+                forceOverlay("Uploading...", 60, "warn"); 
                 
-                // VISUELLE RÜCKMELDUNG:
-                // Wir setzen eine lange Dauer (60s), damit der Text während des 
-                // gesamten Uploads stehen bleibt. Am Ende überschreiben wir ihn mit "Done".
-                forceOverlay("Uploading...", 60, "warn"); // "warn" ist Rot
-                
-                File f = LittleFS.open(filename, "w");
-                if(!f) Serial.println("Failed to open file");
+                uploadFile = LittleFS.open(filename, "w");
+                if(!uploadFile) Serial.println("Failed to open file for writing");
 
-            } else if (upload.status == UPLOAD_FILE_WRITE) {
-                if (upload.currentSize > 0) {
-                    String filename = "/" + upload.filename;
-                    if(!filename.startsWith("/")) filename = "/" + filename;
-                    File f = LittleFS.open(filename, "a");
-                    if(f) f.write(upload.buf, upload.currentSize);
-                    f.close();
+            } 
+            // --- WRITE: Schreiben ---
+            else if (upload.status == UPLOAD_FILE_WRITE) {
+                if (uploadFile) {
+                    uploadFile.write(upload.buf, upload.currentSize);
                 }
             } 
+            // --- END: Schließen ---
+            else if (upload.status == UPLOAD_FILE_END) {
+                if (uploadFile) {
+                    uploadFile.close();
+                    Serial.print("Upload Size: "); Serial.println(upload.totalSize);
+                }
+            }
+            // --- ABORT: Fehlerfall (HIER WAR DER FEHLER) ---
+            else if (upload.status == UPLOAD_FILE_ABORTED) { 
+                if (uploadFile) {
+                    uploadFile.close();
+                    Serial.println("Web: Upload Aborted");
+                    forceOverlay("Aborted", 3, "warn");
+                    LittleFS.remove("/" + upload.filename); 
+                }
+            }
         });
 
         // 3. Delete Handler
