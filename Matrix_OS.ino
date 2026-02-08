@@ -35,6 +35,7 @@ WebManager webServer;
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
+SemaphoreHandle_t appDataMutex; // NEU
 SemaphoreHandle_t overlayMutex; 
 volatile bool isBooting = true;
 // isSystemUploading brauchen wir nicht mehr -> gelöscht
@@ -339,10 +340,11 @@ void setup() {
   delay(4000); 
 
   overlayMutex = xSemaphoreCreateMutex();
+  appDataMutex = xSemaphoreCreateMutex(); // NEU: Initialisieren 
+  
   if (!display.begin()) {
     while(1);
   }
-  
   status("Boot...");
   // Prio 4 ist gut für Network, damit Display (Prio 10) Vorfahrt hat, aber Network nicht verhungert
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 16000, NULL, 4, &NetworkTask, 0);

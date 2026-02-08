@@ -3,6 +3,7 @@
 #include "RichText.h"
 #include <map>
 #include <vector>
+extern SemaphoreHandle_t appDataMutex;
 
 // Datenstruktur für einen einzelnen Wert
 struct SensorItem {
@@ -39,7 +40,9 @@ public:
 
     // Wird vom NetworkManager aufgerufen, um Daten zu speichern
     void updatePage(String id, String title, int ttl, const std::vector<SensorItem>& newItems) {
-        SensorPage& p = pages[id]; // Erstellt neu oder holt existierende
+        if (xSemaphoreTake(appDataMutex, portMAX_DELAY) == pdTRUE) { // LOCK
+            SensorPage& p = pages[id];
+            
         p.title = title;
         p.ttl = ttl;
         p.items = newItems;
@@ -52,12 +55,19 @@ public:
         
         // Fix: Falls die Liste leer war und currentPageIt ungültig ist
         if (pages.size() == 1) currentPageIt = pages.begin();
+        xSemaphoreGive(appDataMutex); // UNLOCK
+        }
     }
 
     void draw(DisplayManager& display) override {
+    // 1. VERSUCHEN DEN MUTEX ZU BEKOMMEN
+    // Wir warten maximal 5ms. Wenn der NetworkTask gerade schreibt und länger braucht,
+    // überspringen wir dieses Frame einfach (kein Ruckeln, kein Absturz).
+    if (xSemaphoreTake(appDataMutex, 5 / portTICK_PERIOD_MS) == pdTRUE) {
+
         unsigned long now = millis();
 
-        // 1. GARBAGE COLLECTION
+        // --- A. GARBAGE COLLECTION (Veraltete Seiten löschen) ---
         auto it = pages.begin();
         while (it != pages.end()) {
             // Wenn TTL abgelaufen (TTL * 1000 ms)
@@ -65,7 +75,7 @@ public:
                 
                 bool isCurrent = (it == currentPageIt);
                 
-                // WICHTIG: it wird VOR dem Zugriff aktualisiert
+                // Löschen ist jetzt sicher, da wir den Mutex haben!
                 it = pages.erase(it); 
                 
                 // Wenn die aktive Seite gelöscht wurde, Zeiger korrigieren
@@ -80,29 +90,30 @@ public:
             }
         }
 
-        // Wenn keine Seiten da sind -> Leermeldung
+        // --- B. LEER-CHECK ---
         if (pages.empty()) {
-            // Y=39 ist die neue optische Mitte
             richText.drawCentered(display, 39, "{c:muted}No Sensor Data", "Small");
+            // WICHTIG: Mutex wieder freigeben bevor wir returnen!
+            xSemaphoreGive(appDataMutex);
             return;
         }
 
-        // 2. Rotation: Nächste Seite wählen
+        // --- C. ROTATION (Nächste Seite wählen) ---
         if (now - lastPageSwitch > SWITCH_DELAY) {
             lastPageSwitch = now;
             currentPageIt++;
             if (currentPageIt == pages.end()) currentPageIt = pages.begin();
         }
         
-        // Sicherheitscheck
+        // Sicherheitscheck (falls Iterator ungültig wurde)
         if (currentPageIt == pages.end()) currentPageIt = pages.begin();
 
-        // 3. Zeichnen
+        // --- D. ZEICHNEN ---
         if (currentPageIt != pages.end()) {
             drawPage(display, currentPageIt->second);
         }
         
-        // Page Indicator (Kleine Punkte unten, wenn > 1 Seite)
+        // --- E. PAGE INDICATOR (Punkte unten) ---
         if (pages.size() > 1) {
             int totalW = pages.size() * 4; 
             int startX = (M_WIDTH - totalW) / 2;
@@ -114,7 +125,13 @@ public:
                 idx++;
             }
         }
+
+        // 2. MUTEX WIEDER FREIGEBEN (Ganz wichtig!)
+        xSemaphoreGive(appDataMutex);
     }
+    // Wenn wir den Mutex NICHT bekommen haben (else), machen wir einfach gar nichts.
+    // Das Display behält den letzten Inhalt für 16ms. Das sieht das Auge nicht.
+}
 
 private:
     void drawPage(DisplayManager& display, SensorPage& p) {
