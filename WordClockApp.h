@@ -9,20 +9,32 @@ private:
     RichText richText;
     const char* stundenNamen[13] = {"zwölf", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf"};
     
-    // NEU: Speicher für die letzte gültige Zeit (gegen Flackern)
+    // Speicher für die letzte gültige Zeit (gegen Flackern)
     struct tm lastKnownTime;
     bool hasValidTime = false;
 
+    // NEU: Timer für Performance-Optimierung
+    // Wir fragen die Systemzeit nur alle 200ms ab, statt 60x pro Sekunde.
+    unsigned long lastTimeCheck = 0;
+    const unsigned long TIME_CHECK_INTERVAL = 200; 
+
 public:
     void draw(DisplayManager& display) override {
-        struct tm ti;
-        
-        // VERSUCH: Zeit holen (0ms Timeout)
-        if(getLocalTime(&ti, 0)) {
-            // Erfolg -> Speichern
-            lastKnownTime = ti;
-            hasValidTime = true;
-        } 
+        unsigned long now = millis();
+
+        // 1. PERFORMANCE BREMSE:
+        // Nur alle 200ms die echte Systemzeit holen.
+        // Das entlastet Core 0/1 Synchronisation massiv.
+        if (now - lastTimeCheck > TIME_CHECK_INTERVAL) {
+            lastTimeCheck = now;
+            
+            struct tm ti;
+            // Timeout 0 ist wichtig, damit wir nicht blockieren
+            if(getLocalTime(&ti, 0)) {
+                lastKnownTime = ti;
+                hasValidTime = true;
+            } 
+        }
         
         // CHECK: Haben wir überhaupt eine Zeit?
         if (!hasValidTime) {
@@ -31,7 +43,7 @@ public:
             return;
         }
 
-        // Ab hier nutzen wir immer 'lastKnownTime' (stabilisiert)
+        // Ab hier nutzen wir die gespeicherte Zeit (stabilisiert)
         int h = lastKnownTime.tm_hour;
         int m = lastKnownTime.tm_min;
         int mR = (m / 5) * 5; 
