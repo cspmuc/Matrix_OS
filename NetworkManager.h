@@ -129,7 +129,7 @@ public:
         if (WiFi.status() != WL_CONNECTED) {
              WiFi.mode(WIFI_STA);
              WiFi.begin(ssid, password);
-             delay(1000);
+             //delay(1000);
         }
 
         if (WiFi.status() == WL_CONNECTED) {
