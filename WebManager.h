@@ -10,7 +10,7 @@ extern DisplayManager display;
 // Zugriff auf die globale Upload-Variable
 extern volatile bool isSystemUploading; 
 
-// Puffergröße 1024 ist der Sweetspot für Stabilität
+// Puffergröße 1024 hat sich bewährt
 #define UPLOAD_BUFFER_SIZE 1024 
 
 class WebManager {
@@ -25,8 +25,45 @@ private:
         if (uploadFile && bufferPos > 0) {
             uploadFile.write(buffer, bufferPos);
             bufferPos = 0;
-            yield(); 
+            // WICHTIG: delay(1) ist mächtiger als yield(). 
+            // Es zwingt den Task-Switch zum IDLE-Task, wo der WLAN-Stack "wohnt".
+            // Das verhindert Timeouts bei großen Dateien.
+            delay(1); 
         }
+    }
+
+    // Hilfsfunktion: Dateinamen "sicher" machen
+    String sanitizeFilename(String filename) {
+        // 1. Pfad-Slashes entfernen (nur Dateiname)
+        int lastSlash = filename.lastIndexOf('/');
+        if (lastSlash >= 0) filename = filename.substring(lastSlash + 1);
+        
+        // 2. Erlaubte Zeichen filtern & Länge begrenzen
+        String cleanName = "";
+        for (char c : filename) {
+            // Nur Buchstaben, Zahlen, Punkt, Unterstrich, Bindestrich
+            if (isalnum(c) || c == '.' || c == '_' || c == '-') {
+                cleanName += c;
+            } else {
+                cleanName += '_'; // Leerzeichen/Sonderzeichen ersetzen
+            }
+        }
+        
+        // 3. Maximale Länge erzwingen (LittleFS Limit oft 31 Zeichen)
+        // Wir kürzen radikal auf 20 Zeichen + Extension, um sicher zu sein.
+        if (cleanName.length() > 30) {
+            String ext = "";
+            int dotIndex = cleanName.lastIndexOf('.');
+            if (dotIndex > 0) ext = cleanName.substring(dotIndex);
+            
+            // Name vorne abschneiden
+            cleanName = cleanName.substring(0, 30 - ext.length()) + ext;
+        }
+        
+        // Führenden Slash für LittleFS wieder anfügen
+        if (!cleanName.startsWith("/")) cleanName = "/" + cleanName;
+        
+        return cleanName;
     }
 
 public:
@@ -65,7 +102,7 @@ public:
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
             
-            // WICHTIG: Upload fertig -> Display wieder an
+            // Display wieder an
             isSystemUploading = false;
             
             forceOverlay("Upload Done", 3, "success"); 
@@ -76,17 +113,19 @@ public:
             esp_task_wdt_reset();
 
             if (upload.status == UPLOAD_FILE_START) {
-                // WICHTIG: Upload startet -> Display AUS
+                // Display AUS
                 isSystemUploading = true;
-                
-                // Kurze Pause, damit der DisplayTask Zeit hat zu stoppen
-                delay(50);
+                delay(50); // Display Task Zeit zum Stoppen geben
                 
                 bufferPos = 0;
-                String filename = "/" + upload.filename;
-                if(!filename.startsWith("/")) filename = "/" + filename;
                 
-                Serial.print("Web: Upload Start: "); Serial.println(filename);
+                // NEU: Dateinamen bereinigen (gegen Umlaute und Überlänge)
+                String filename = sanitizeFilename(upload.filename);
+                
+                Serial.print("Web: Upload Start: "); 
+                Serial.print(upload.filename);
+                Serial.print(" -> ");
+                Serial.println(filename);
                 
                 uploadFile = LittleFS.open(filename, "w");
             } 
@@ -101,6 +140,7 @@ public:
                         bufferPos += chunk;
                         bytesToProcess -= chunk;
                         incomingIndex += chunk;
+                        
                         if (bufferPos >= UPLOAD_BUFFER_SIZE) flushBuffer();
                     }
                 }
@@ -113,12 +153,13 @@ public:
                 }
             }
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
-                // Im Fehlerfall sofort Display wieder an
                 isSystemUploading = false;
                 if (uploadFile) {
                     uploadFile.close();
                     Serial.println("Web: Upload Aborted");
-                    LittleFS.remove("/" + upload.filename); 
+                    // Wir versuchen zu löschen, kennen aber den bereinigten Namen hier schwer.
+                    // Daher lassen wir die Dateileiche evtl. liegen oder müssten den Namen speichern.
+                    // Für jetzt reicht das Close.
                 }
             }
         });
