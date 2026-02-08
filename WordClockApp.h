@@ -8,22 +8,35 @@ class WordClockApp : public App {
 private:
     RichText richText;
     const char* stundenNamen[13] = {"zwölf", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf"};
+    
+    // NEU: Speicher für die letzte gültige Zeit (gegen Flackern)
+    struct tm lastKnownTime;
+    bool hasValidTime = false;
 
 public:
     void draw(DisplayManager& display) override {
         struct tm ti;
         
-        // WICHTIGER FIX: Timeout auf 0 setzen!
-        // getLocalTime(&ti) ohne Parameter wartet standardmäßig 5000ms -> Blockiert das Display!
-        // getLocalTime(&ti, 0) kehrt sofort zurück.
-        if(!getLocalTime(&ti, 0)) {
-            // Zeigt "NTP not synced" zentriert in Rot an
+        // VERSUCH: Zeit holen (0ms Timeout)
+        if(getLocalTime(&ti, 0)) {
+            // Erfolg -> Speichern
+            lastKnownTime = ti;
+            hasValidTime = true;
+        } 
+        
+        // CHECK: Haben wir überhaupt eine Zeit?
+        if (!hasValidTime) {
+            // Nur wenn wir noch NIE eine Zeit hatten, zeigen wir den Fehler
             richText.drawCentered(display, 36, "{c:red}NTP not synced", "Small");
             return;
         }
 
-        int h = ti.tm_hour, m = ti.tm_min, mR = (m / 5) * 5; 
-        int s = h % 12, nextS = (s + 1) % 12;
+        // Ab hier nutzen wir immer 'lastKnownTime' (stabilisiert)
+        int h = lastKnownTime.tm_hour;
+        int m = lastKnownTime.tm_min;
+        int mR = (m / 5) * 5; 
+        int s = h % 12;
+        int nextS = (s + 1) % 12;
 
         // --- EDLE ECKEN (Minuten) ---
         uint16_t dotCol = COL_GOLD; 

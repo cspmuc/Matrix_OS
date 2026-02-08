@@ -3,20 +3,34 @@
 #include <LittleFS.h>
 #include "config.h"
 
-// Zugriff auf Overlay und Display
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern DisplayManager display; 
+
+// Puffergröße: 4KB ist ein guter Kompromiss aus Speed und RAM-Verbrauch
+#define UPLOAD_BUFFER_SIZE 4096 
 
 class WebManager {
 private:
     WebServer server;
-    File uploadFile; // Datei-Handle bleibt offen
+    File uploadFile;
+    
+    // NEU: Interner Puffer
+    uint8_t buffer[UPLOAD_BUFFER_SIZE];
+    size_t bufferPos = 0;
+
+    // Hilfsfunktion: Puffer leeren (auf Flash schreiben)
+    void flushBuffer() {
+        if (uploadFile && bufferPos > 0) {
+            uploadFile.write(buffer, bufferPos);
+            bufferPos = 0;
+        }
+    }
 
 public:
     WebManager() : server(80) {}
 
     void begin() {
-        // 1. Root: Zeigt Dateiliste & Freien Speicher
+        // 1. Root Page
         server.on("/", HTTP_GET, [this]() {
             String html = "<html><head><title>Matrix OS</title></head><body>";
             html += "<h1>Matrix OS Storage</h1>";
@@ -44,7 +58,7 @@ public:
             server.send(200, "text/html", html);
         });
 
-        // 2. Upload Handler (OPTIMIERT & KORRIGIERT)
+        // 2. Upload Handler (BUFFERED)
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
             forceOverlay("Upload Done", 3, "success"); 
@@ -53,11 +67,13 @@ public:
         }, [this]() { 
             HTTPUpload& upload = server.upload();
             
-            // --- START: Datei öffnen ---
+            // --- START ---
             if (upload.status == UPLOAD_FILE_START) {
+                // Buffer Reset
+                bufferPos = 0;
+
                 size_t freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
                 if (freeSpace < 10000) { 
-                     Serial.println("Storage Full! Aborting.");
                      forceOverlay("Disk Full!", 5, "warn");
                      return; 
                 }
@@ -69,23 +85,44 @@ public:
                 forceOverlay("Uploading...", 60, "warn"); 
                 
                 uploadFile = LittleFS.open(filename, "w");
-                if(!uploadFile) Serial.println("Failed to open file for writing");
-
             } 
-            // --- WRITE: Schreiben ---
+            // --- WRITE (Buffered) ---
             else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (uploadFile) {
-                    uploadFile.write(upload.buf, upload.currentSize);
+                    // Daten in den Puffer kopieren
+                    size_t bytesToProcess = upload.currentSize;
+                    size_t incomingIndex = 0;
+                    
+                    while (bytesToProcess > 0) {
+                        // Wieviel Platz ist noch im Puffer?
+                        size_t spaceLeft = UPLOAD_BUFFER_SIZE - bufferPos;
+                        
+                        // Wieviel können wir kopieren?
+                        size_t chunk = (bytesToProcess < spaceLeft) ? bytesToProcess : spaceLeft;
+                        
+                        // Kopieren
+                        memcpy(buffer + bufferPos, upload.buf + incomingIndex, chunk);
+                        
+                        bufferPos += chunk;
+                        bytesToProcess -= chunk;
+                        incomingIndex += chunk;
+                        
+                        // Wenn voll -> Schreiben & Leeren
+                        if (bufferPos >= UPLOAD_BUFFER_SIZE) {
+                            flushBuffer();
+                        }
+                    }
                 }
             } 
-            // --- END: Schließen ---
+            // --- END ---
             else if (upload.status == UPLOAD_FILE_END) {
                 if (uploadFile) {
+                    flushBuffer(); // Rest schreiben
                     uploadFile.close();
                     Serial.print("Upload Size: "); Serial.println(upload.totalSize);
                 }
             }
-            // --- ABORT: Fehlerfall (HIER WAR DER FEHLER) ---
+            // --- ABORT ---
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
                 if (uploadFile) {
                     uploadFile.close();
@@ -96,7 +133,7 @@ public:
             }
         });
 
-        // 3. Delete Handler
+        // 3. Delete Handler (Code unverändert)
         server.on("/delete", HTTP_GET, [this]() {
             if (server.hasArg("name")) {
                 String filename = server.arg("name");
