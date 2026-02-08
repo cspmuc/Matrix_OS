@@ -77,6 +77,17 @@ void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed
     }
 }
 
+// NEU: Erzwingt eine sofortige Nachricht (löscht Warteschlange)
+void forceOverlay(String msg, int durationSec, String colorName) {
+    if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
+        overlayQueue.clear();         // Alles Alte wegwerfen
+        isOverlayActive = false;      // Reset, damit sofort neu gezeichnet wird
+        // Neue Nachricht einfügen (Speed 0 = kein Scrollen bei kurzem Text)
+        overlayQueue.push_back({msg, durationSec, colorName, 0}); 
+        xSemaphoreGive(overlayMutex);
+    }
+}
+
 void status(const String& msg, uint16_t color = 0xFFFF) {
   // NEU: Ausgabe auch auf dem Serial Monitor
   Serial.print("[STATUS] ");

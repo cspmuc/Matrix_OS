@@ -3,14 +3,13 @@
 #include <LittleFS.h>
 #include "config.h"
 
-// Zugriff auf Display Status
-extern void status(const String& msg, uint16_t color);
+// WICHTIG: Zugriff auf die neue Overlay-Funktion
+extern void forceOverlay(String msg, int durationSec, String colorName);
 extern DisplayManager display; 
 
 class WebManager {
 private:
     WebServer server;
-    bool isUploading = false;
 
 public:
     WebManager() : server(80) {}
@@ -19,19 +18,16 @@ public:
         // 1. Root: Zeigt Dateiliste & Freien Speicher
         server.on("/", HTTP_GET, [this]() {
             String html = "<html><head><title>Matrix OS</title></head><body>";
-            html += "<h1>Storage Manager</h1>";
+            html += "<h1>Matrix OS Storage</h1>";
             
-            // Speicher Info
             size_t total = LittleFS.totalBytes();
             size_t used = LittleFS.usedBytes();
             html += "<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>";
             
-            // Upload Form
             html += "<form method='POST' action='/upload' enctype='multipart/form-data'>";
             html += "<input type='file' name='upload'><input type='submit' value='Upload'>";
             html += "</form><hr>";
 
-            // File List
             html += "<table border='1'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
             File root = LittleFS.open("/");
             File file = root.openNextFile();
@@ -47,33 +43,38 @@ public:
             server.send(200, "text/html", html);
         });
 
-        // 2. Upload Handler MIT CHECKS
+        // 2. Upload Handler mit Overlay-Feedback
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
-            // Upload fertig -> Status reset
-            status("Upload Done", display.color565(0, 255, 0));
-            delay(1000); // Kurz zeigen
+            
+            // ERFOLG: Zeige "Done" in Grün für 3 Sekunden
+            forceOverlay("Upload Done", 3, "success"); // "success" ist Grün (siehe RichText)
+            Serial.println("Web: Upload finished.");
+            
         }, [this]() { 
             HTTPUpload& upload = server.upload();
             
             if (upload.status == UPLOAD_FILE_START) {
-                // START: Checken ob Platz ist (grobe Schätzung)
+                // START: Speicher Check
                 size_t freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
-                
-                // Wir reservieren 10KB Sicherheitspuffer
                 if (freeSpace < 10000) {
                      Serial.println("Storage Full! Aborting.");
-                     return; // Einfach abbrechen, Datei wird nicht geöffnet
+                     forceOverlay("Disk Full!", 5, "warn");
+                     return; 
                 }
 
                 String filename = "/" + upload.filename;
                 if(!filename.startsWith("/")) filename = "/" + filename;
                 
-                Serial.print("Upload Start: "); Serial.println(filename);
-                status("Uploading...", display.color565(255, 0, 0)); // Roter Warntext auf Matrix
+                Serial.print("Web: Upload Start: "); Serial.println(filename);
+                
+                // VISUELLE RÜCKMELDUNG:
+                // Wir setzen eine lange Dauer (60s), damit der Text während des 
+                // gesamten Uploads stehen bleibt. Am Ende überschreiben wir ihn mit "Done".
+                forceOverlay("Uploading...", 60, "warn"); // "warn" ist Rot
                 
                 File f = LittleFS.open(filename, "w");
-                if(!f) Serial.println("Failed to open file for writing");
+                if(!f) Serial.println("Failed to open file");
 
             } else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (upload.currentSize > 0) {
@@ -83,9 +84,7 @@ public:
                     if(f) f.write(upload.buf, upload.currentSize);
                     f.close();
                 }
-            } else if (upload.status == UPLOAD_FILE_END) {
-                Serial.print("Upload Size: "); Serial.println(upload.totalSize);
-            }
+            } 
         });
 
         // 3. Delete Handler
@@ -93,7 +92,10 @@ public:
             if (server.hasArg("name")) {
                 String filename = server.arg("name");
                 if(!filename.startsWith("/")) filename = "/" + filename;
-                if (LittleFS.exists(filename)) LittleFS.remove(filename);
+                if (LittleFS.exists(filename)) {
+                    LittleFS.remove(filename);
+                    forceOverlay("Deleted", 2, "info");
+                }
             }
             server.sendHeader("Location", "/");
             server.send(303);
