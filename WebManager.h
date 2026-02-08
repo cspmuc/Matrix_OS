@@ -1,14 +1,15 @@
 #pragma once
 #include <WebServer.h>
 #include <LittleFS.h>
-#include <esp_task_wdt.h> // WICHTIG: Für den Watchdog Reset
+#include <esp_task_wdt.h> 
 #include "config.h"
 
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern DisplayManager display; 
 
-// 4KB Puffer ist gut, aber wir müssen dem System Zeit geben, ihn zu schreiben
-#define UPLOAD_BUFFER_SIZE 4096 
+// WICHTIG: Puffer auf 1024 reduziert! 
+// 4096 blockiert den Flash zu lange -> WLAN Paketverlust -> Abbruch
+#define UPLOAD_BUFFER_SIZE 1024 
 
 class WebManager {
 private:
@@ -22,10 +23,7 @@ private:
         if (uploadFile && bufferPos > 0) {
             uploadFile.write(buffer, bufferPos);
             bufferPos = 0;
-            
-            // WICHTIG: Hier dem System Luft geben!
-            // Das erlaubt dem TCP-Stack, Bestätigungspakete (ACK) zu senden,
-            // während wir auf den langsamen Flash warten.
+            // Dem Netzwerk-Stack Zeit geben, ACKs zu senden
             yield(); 
         }
     }
@@ -62,7 +60,7 @@ public:
             server.send(200, "text/html", html);
         });
 
-        // 2. Upload Handler (Stabilisiert)
+        // 2. Upload Handler
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
             forceOverlay("Upload Done", 3, "success"); 
@@ -70,7 +68,7 @@ public:
         }, [this]() { 
             HTTPUpload& upload = server.upload();
             
-            // Watchdog füttern, damit er bei großen Dateien nicht zubeißt
+            // Watchdog füttern
             esp_task_wdt_reset();
 
             if (upload.status == UPLOAD_FILE_START) {
@@ -87,6 +85,7 @@ public:
                 Serial.print("Web: Upload Start: "); Serial.println(filename);
                 forceOverlay("Uploading...", 60, "warn"); 
                 
+                // Datei im "Write" Modus öffnen
                 uploadFile = LittleFS.open(filename, "w");
             } 
             else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -95,9 +94,6 @@ public:
                     size_t incomingIndex = 0;
                     
                     while (bytesToProcess > 0) {
-                        // Auch innerhalb der Kopier-Schleife kurz atmen
-                        if (bytesToProcess % 1024 == 0) yield();
-
                         size_t spaceLeft = UPLOAD_BUFFER_SIZE - bufferPos;
                         size_t chunk = (bytesToProcess < spaceLeft) ? bytesToProcess : spaceLeft;
                         
