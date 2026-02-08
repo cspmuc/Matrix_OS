@@ -14,8 +14,8 @@
 #include "TickerApp.h"
 #include "PlasmaApp.h"
 #include "RichText.h"
-#include "StorageManager.h" // NEU
-#include "WebManager.h"     // NEU
+#include "StorageManager.h" 
+#include "WebManager.h"     
 
 // Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
@@ -30,13 +30,15 @@ TestPatternApp appTestPattern;
 SensorApp appSensors;
 TickerApp appTicker;
 PlasmaApp appPlasma;
-StorageManager storage;     // NEU
-WebManager webServer;       // NEU
+StorageManager storage;
+WebManager webServer;       
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
 SemaphoreHandle_t overlayMutex; 
 volatile bool isBooting = true;
+// NEU: Globaler Schalter für Uploads
+volatile bool isSystemUploading = false; 
 
 // --- BOOT LOGIC ---
 struct BootLogEntry { String text; uint16_t color; };
@@ -52,7 +54,7 @@ struct OverlayMessage {
     String text;
     int durationSec;
     String colorName;
-    int scrollSpeed; // NEU: Pixel pro Sekunde
+    int scrollSpeed;
 };
 
 std::deque<OverlayMessage> overlayQueue;
@@ -67,7 +69,6 @@ const float fadeStep = 1.0 / ((float)fadeDurationMs / (float)frameDelay);
 
 // --- FUNKTIONEN ---
 
-// NEU: scrollSpeed Parameter übernehmen
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
     if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
         if (overlayQueue.size() < 5) {
@@ -77,19 +78,16 @@ void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed
     }
 }
 
-// NEU: Erzwingt eine sofortige Nachricht (löscht Warteschlange)
 void forceOverlay(String msg, int durationSec, String colorName) {
     if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
-        overlayQueue.clear();         // Alles Alte wegwerfen
-        isOverlayActive = false;      // Reset, damit sofort neu gezeichnet wird
-        // Neue Nachricht einfügen (Speed 0 = kein Scrollen bei kurzem Text)
-        overlayQueue.push_back({msg, durationSec, colorName, 0}); 
+        overlayQueue.clear();
+        isOverlayActive = false;
+        overlayQueue.push_back({msg, durationSec, colorName, 0});
         xSemaphoreGive(overlayMutex);
     }
 }
 
 void status(const String& msg, uint16_t color = 0xFFFF) {
-  // NEU: Ausgabe auch auf dem Serial Monitor
   Serial.print("[STATUS] ");
   Serial.println(msg);
 
@@ -129,10 +127,8 @@ void drawOTA(int progress) {
   display.printCentered(p, 50);
 }
 
-// --- OVERLAY RENDERING MIT SCROLLING ---
 void processAndDrawOverlay(DisplayManager& display) {
     unsigned long now = millis();
-
     if (xSemaphoreTake(overlayMutex, 0) == pdTRUE) { 
         if (isOverlayActive) {
             if (now > overlayEndTime) {
@@ -142,7 +138,6 @@ void processAndDrawOverlay(DisplayManager& display) {
         if (!isOverlayActive && !overlayQueue.empty()) {
             currentOverlay = overlayQueue.front();
             overlayQueue.pop_front();
-            
             isOverlayActive = true;
             overlayStartTime = now;
             overlayEndTime = now + (currentOverlay.durationSec * 1000);
@@ -152,16 +147,12 @@ void processAndDrawOverlay(DisplayManager& display) {
 
     if (isOverlayActive) {
         String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
-        
         int textW = richTextOverlay.getTextWidth(display, finalMsg, "Medium");
-        
         int boxH = 34;
         int boxW = 104; 
-        
         bool isScrolling = false;
-        
         if (textW > (boxW - 10)) {
-            boxW = M_WIDTH; 
+            boxW = M_WIDTH;
             isScrolling = true;
         }
 
@@ -170,27 +161,16 @@ void processAndDrawOverlay(DisplayManager& display) {
 
         display.dimRect(boxX, boxY, boxW, boxH); 
         display.drawRect(boxX, boxY, boxW, boxH, display.color565(80, 80, 80));
-
         int textY = boxY + (boxH / 2) + 5;
-
         if (!isScrolling) {
             richTextOverlay.drawCentered(display, textY, finalMsg, "Medium");
         } else {
-            // SCROLLING LOGIK NEU (Pixel pro Sekunde)
-            float speedPPS = (float)currentOverlay.scrollSpeed; // z.B. 30.0
-            
+            float speedPPS = (float)currentOverlay.scrollSpeed;
             long timePassedMs = now - overlayStartTime;
-            
-            // Berechne Pixel-Offset als Float für mehr Präzision vor dem Runden
-            // (time in sec) * pixels_per_sec
             float pixelsMoved = ((float)timePassedMs / 1000.0f) * speedPPS;
-            
             int startX = boxX + boxW;
-            int totalDist = boxW + textW + 20; 
-            
-            // Modulo math mit int, aber basierend auf präziserem "pixelsMoved"
+            int totalDist = boxW + textW + 20;
             int currentScrollX = startX - ((int)pixelsMoved % totalDist);
-            
             richTextOverlay.drawString(display, currentScrollX, textY, finalMsg, "Medium");
         }
         
@@ -213,17 +193,14 @@ void networkTaskFunction(void * pvParameters) {
   Serial.println("Boot: Checking Filesystem...");
   status("Check Storage...", display.color565(255, 255, 255));
   
-  // WICHTIG: Wir merken uns das Ergebnis in einer Variable!
   bool fsMounted = storage.begin();
-  
   if (!fsMounted) {
-     // Fehler anzeigen, aber NICHT abstürzen/stoppen
      Serial.println("Boot: FS Failed! Continuing in Safe Mode...");
      status("Storage Fail!", display.color565(255, 0, 0));
      delay(2000); 
   }
 
-  // --- SCHRITT 2: WLAN Starten (Geht auch ohne Dateisystem!) ---
+  // --- SCHRITT 2: WLAN Starten ---
   Serial.println("Boot: Connecting to WiFi...");
   status("Connect WiFi...", display.color565(255, 255, 255));
   
@@ -247,12 +224,12 @@ void networkTaskFunction(void * pvParameters) {
   // --- SCHRITT 3: IP ---
   String ip = network.getIp();
   status("IP: " + ip, display.color565(0, 255, 0));
-  delay(3000); 
+  delay(3000);
 
-  // --- SCHRITT 4: WebServer (NUR WENN FS OK IST) ---
+  // --- SCHRITT 4: WebServer ---
   if (fsMounted) {
       status("Start WebSrv...", display.color565(200, 200, 255));
-      webServer.begin(); // Nur starten, wenn Speicher da ist
+      webServer.begin(); 
   } else {
       Serial.println("Boot: Skipping WebServer (Safe Mode)");
   }
@@ -261,23 +238,17 @@ void networkTaskFunction(void * pvParameters) {
   // --- SCHRITT 5: NTP ---
   status("Wait for Time...", display.color565(255, 165, 0));
   network.tryInitServices();
-  
   bool timeSuccess = false;
   int ntpRetryCount = 0;
   
   while(!timeSuccess) {
-      // Sicherung: Handle nur aufrufen, wenn Server auch läuft
-      if (fsMounted) webServer.handle(); 
-      
+      if (fsMounted) webServer.handle();
       network.loop();
-      
       if (network.isTimeSynced()) timeSuccess = true;
-      
       if (!network.isConnected()) {
           status("WiFi Lost!", display.color565(255, 0, 0));
           delay(1000);
       }
-      
       delay(100);
       if(ntpRetryCount++ > 200) break;
   }
@@ -292,11 +263,8 @@ void networkTaskFunction(void * pvParameters) {
   
   // --- ENDLOS LOOP ---
   for(;;) {
-    network.loop(); // MQTT geht immer (braucht kein Filesystem)
-    
-    // Sicherung im Loop
-    if (fsMounted) webServer.handle(); 
-    
+    network.loop();
+    if (fsMounted) webServer.handle();
     vTaskDelay((otaActive ? 1 : 10) / portTICK_PERIOD_MS);
   }
 }
@@ -307,8 +275,19 @@ void displayTaskFunction(void * pvParameters) {
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(frameDelay);
-  
+
   for(;;) {
+      // --- NEU: DISPLAY PAUSIEREN BEI UPLOAD ---
+      if (isSystemUploading) {
+          // Display schwarz, damit man sieht, dass es "arbeitet"
+          display.clear();
+          display.show();
+          // CPU freigeben für NetworkTask
+          vTaskDelay(100 / portTICK_PERIOD_MS);
+          continue; // Schleife neu starten
+      }
+      // ------------------------------------------
+
       int currentBright = brightness.load();
       display.setBrightness(currentBright);
       
@@ -330,7 +309,7 @@ void displayTaskFunction(void * pvParameters) {
       bool localBooting = false;
       bool localOta = false;
       int localOtaProg = 0;
-
+      
       if (xSemaphoreTake(overlayMutex, 5 / portTICK_PERIOD_MS) == pdTRUE) {
         localBooting = isBooting;
         localOta = otaActive;
@@ -338,7 +317,7 @@ void displayTaskFunction(void * pvParameters) {
         xSemaphoreGive(overlayMutex); 
       }
 
-      display.clear(); 
+      display.clear();
 
       if (localOta) {
            display.setFade(1.0);
@@ -372,9 +351,7 @@ void displayTaskFunction(void * pvParameters) {
 
 void setup() {
   Serial.begin(115200);
-  // WARTE-BREMSE (Nur zum Debuggen! Später entfernen/auskommentieren)
-  // Wartet 4 Sekunden, damit USB sich verbinden kann
-  delay(4000);
+  delay(4000); // Debug Wartezeit
 
   overlayMutex = xSemaphoreCreateMutex();
   if (!display.begin()) {
@@ -382,6 +359,7 @@ void setup() {
   }
   
   status("Boot...");
+  // NetworkTask hat jetzt Priorität 4, damit er wichtiger ist als Idle
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 16000, NULL, 4, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }

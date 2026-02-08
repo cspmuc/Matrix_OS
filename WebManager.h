@@ -7,8 +7,10 @@
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern DisplayManager display; 
 
-// WICHTIG: Puffer auf 1024 reduziert! 
-// 4096 blockiert den Flash zu lange -> WLAN Paketverlust -> Abbruch
+// Zugriff auf die globale Upload-Variable
+extern volatile bool isSystemUploading; 
+
+// Puffergröße 1024 ist der Sweetspot für Stabilität
 #define UPLOAD_BUFFER_SIZE 1024 
 
 class WebManager {
@@ -23,7 +25,6 @@ private:
         if (uploadFile && bufferPos > 0) {
             uploadFile.write(buffer, bufferPos);
             bufferPos = 0;
-            // Dem Netzwerk-Stack Zeit geben, ACKs zu senden
             yield(); 
         }
     }
@@ -63,49 +64,44 @@ public:
         // 2. Upload Handler
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
+            
+            // WICHTIG: Upload fertig -> Display wieder an
+            isSystemUploading = false;
+            
             forceOverlay("Upload Done", 3, "success"); 
             Serial.println("Web: Upload finished.");
         }, [this]() { 
             HTTPUpload& upload = server.upload();
             
-            // Watchdog füttern
             esp_task_wdt_reset();
 
             if (upload.status == UPLOAD_FILE_START) {
+                // WICHTIG: Upload startet -> Display AUS
+                isSystemUploading = true;
+                
+                // Kurze Pause, damit der DisplayTask Zeit hat zu stoppen
+                delay(50);
+                
                 bufferPos = 0;
-                size_t freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
-                if (freeSpace < 10000) { 
-                     forceOverlay("Disk Full!", 5, "warn");
-                     return; 
-                }
-
                 String filename = "/" + upload.filename;
                 if(!filename.startsWith("/")) filename = "/" + filename;
                 
                 Serial.print("Web: Upload Start: "); Serial.println(filename);
-                forceOverlay("Uploading...", 60, "warn"); 
                 
-                // Datei im "Write" Modus öffnen
                 uploadFile = LittleFS.open(filename, "w");
             } 
             else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (uploadFile) {
                     size_t bytesToProcess = upload.currentSize;
                     size_t incomingIndex = 0;
-                    
                     while (bytesToProcess > 0) {
                         size_t spaceLeft = UPLOAD_BUFFER_SIZE - bufferPos;
                         size_t chunk = (bytesToProcess < spaceLeft) ? bytesToProcess : spaceLeft;
-                        
                         memcpy(buffer + bufferPos, upload.buf + incomingIndex, chunk);
-                        
                         bufferPos += chunk;
                         bytesToProcess -= chunk;
                         incomingIndex += chunk;
-                        
-                        if (bufferPos >= UPLOAD_BUFFER_SIZE) {
-                            flushBuffer();
-                        }
+                        if (bufferPos >= UPLOAD_BUFFER_SIZE) flushBuffer();
                     }
                 }
             } 
@@ -117,10 +113,11 @@ public:
                 }
             }
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
+                // Im Fehlerfall sofort Display wieder an
+                isSystemUploading = false;
                 if (uploadFile) {
                     uploadFile.close();
                     Serial.println("Web: Upload Aborted");
-                    forceOverlay("Aborted", 3, "warn");
                     LittleFS.remove("/" + upload.filename); 
                 }
             }
