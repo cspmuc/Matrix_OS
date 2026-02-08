@@ -198,33 +198,35 @@ void networkTaskFunction(void * pvParameters) {
   Serial.println("Boot: Connecting to WiFi...");
   status("Connect WiFi...", display.color565(255, 255, 255));
   
-  // Initialer Startschuss - NUR EINMAL!
+  // Initialer Startschuss
   network.begin(); 
 
   int retryCounter = 0;
 
   // Warten bis verbunden
   while(!network.isConnected()) {
-      Serial.println("Boot: Waiting for WiFi...");
-      
-      // Kleiner visueller Indikator (Rot/Weiß wechselnd oder einfach Rot)
-      if (retryCounter % 2 == 0) status("Wait for WiFi...", display.color565(255, 0, 0));
-      else status("Wait for WiFi...", display.color565(200, 0, 0));
+      // Nur Punkte im Serial Monitor, damit man sieht, dass er noch lebt
+      Serial.print(".");
       
       delay(500);
       retryCounter++;
 
-      // NOTFALL-PLAN: Erst nach 20 Versuchen (= 10 Sekunden) einen Neustart des WiFi versuchen
+      // NOTFALL-PLAN: Erst nach 20 Versuchen (= 10 Sekunden)
       if (retryCounter > 20) {
+          Serial.println(); // Neue Zeile im Serial
           Serial.println("Boot: WiFi took too long. Restarting Adapter...");
+          
+          // Hier lohnt sich eine Meldung, weil wirklich was passiert
           status("Retry WiFi...", display.color565(255, 100, 0));
-          // Hier erzwingen wir einen echten Neustart des Versuchs
+          
           WiFi.disconnect();
           delay(100);
           network.begin(); 
-          retryCounter = 0; // Zähler resetten
+          retryCounter = 0; 
       }
   }
+
+  Serial.println(); // Abschluss der Punkte-Reihe
 
   // 2. JETZT sind wir sicher verbunden
   String ip = network.getIp();
@@ -232,6 +234,7 @@ void networkTaskFunction(void * pvParameters) {
   Serial.println(ip);
 
   status("IP: " + ip, display.color565(0, 255, 0));
+  // Hier lassen wir es kurz stehen, damit man die IP lesen kann
   delay(3000); 
 
   // 3. Zeit-Sync
@@ -244,12 +247,11 @@ void networkTaskFunction(void * pvParameters) {
   int ntpRetryCount = 0; 
   
   while(!timeSuccess) {
-      network.loop(); // Wichtig: MQTT und OTA loops am Leben halten
+      network.loop(); 
       
       if (!network.isConnected()) {
           Serial.println("Boot: WiFi Lost during NTP sync!");
           status("WiFi Lost!", display.color565(255, 0, 0));
-          // Wir brechen hier nicht ab, sondern lassen network.loop() versuchen zu reconnecten
           delay(1000);
       }
       
@@ -263,8 +265,6 @@ void networkTaskFunction(void * pvParameters) {
       // Timeout für NTP (20 Sekunden)
       if(ntpRetryCount++ > 200) { 
            Serial.println("Boot: NTP Timeout - Continuing without Sync");
-           // Hier KEIN Status Update mehr, damit der Nutzer nicht verwirrt wird.
-           // Die WordClock App zeigt dann eh "NTP not synced" an.
            break;
       }
   }
