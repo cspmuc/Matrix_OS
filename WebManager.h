@@ -10,8 +10,9 @@ extern DisplayManager display;
 // Zugriff auf die globale Pause-Variable (in Matrix_OS.ino definiert)
 extern volatile bool isSystemUploading; 
 
-// 512 Byte: Kleinere Häppchen = Kürzere Blockade = Stabiles WLAN
-#define UPLOAD_BUFFER_SIZE 512 
+// Puffergröße: 2048 oder 4096 ist jetzt besser, da Display aus ist.
+// Weniger Schreibzugriffe = Höherer Durchsatz.
+#define UPLOAD_BUFFER_SIZE 4096 
 
 class WebManager {
 private:
@@ -26,11 +27,15 @@ private:
             uploadFile.write(buffer, bufferPos);
             bufferPos = 0;
             
-            // Watchdog streicheln, da Schreiben dauern kann
+            // Watchdog streicheln
             esp_task_wdt_reset();
             
-            // WICHTIG: Gibt dem WLAN-Stack Zeit für ACKs
-            delay(1); 
+            // ZURÜCK ZU YIELD:
+            // Da das Display jetzt aus ist ("isSystemUploading"), 
+            // müssen wir nicht mehr künstlich bremsen (delay).
+            // yield() reicht völlig, um den WLAN-Stack atmen zu lassen,
+            // ohne den Durchsatz zu drosseln.
+            yield(); 
         }
     }
 
@@ -71,14 +76,16 @@ public:
             size_t used = LittleFS.usedBytes();
             html += "<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>";
             
-            // Format-Button hinzufügen (Vorsicht!)
+            // Format
             html += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles loeschen?\")'>";
             html += "<input type='submit' value='Formatieren (Alles loeschen)' style='color:red'></form>";
             
+            // Upload
             html += "<hr><form method='POST' action='/upload' enctype='multipart/form-data'>";
             html += "<input type='file' name='upload'><input type='submit' value='Upload'>";
             html += "</form><hr>";
 
+            // Liste
             html += "<table border='1'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
             File root = LittleFS.open("/");
             File file = root.openNextFile();
@@ -94,9 +101,8 @@ public:
             server.send(200, "text/html", html);
         });
 
-        // 2. Format Handler (NEU)
+        // 2. Format
         server.on("/format", HTTP_POST, [this]() {
-            // Display Pause
             isSystemUploading = true;
             delay(100);
             
