@@ -10,9 +10,9 @@ extern DisplayManager display;
 // Zugriff auf die globale Pause-Variable (in Matrix_OS.ino definiert)
 extern volatile bool isSystemUploading; 
 
-// Puffergröße: 2048 oder 4096 ist jetzt besser, da Display aus ist.
-// Weniger Schreibzugriffe = Höherer Durchsatz.
-#define UPLOAD_BUFFER_SIZE 4096 
+// WICHTIG: 4096 war zu viel! Das blockiert den Flash zu lange -> WLAN Absturz.
+// 1024 ist der perfekte Kompromiss aus Speed und Stabilität.
+#define UPLOAD_BUFFER_SIZE 1024 
 
 class WebManager {
 private:
@@ -30,11 +30,8 @@ private:
             // Watchdog streicheln
             esp_task_wdt_reset();
             
-            // ZURÜCK ZU YIELD:
-            // Da das Display jetzt aus ist ("isSystemUploading"), 
-            // müssen wir nicht mehr künstlich bremsen (delay).
-            // yield() reicht völlig, um den WLAN-Stack atmen zu lassen,
-            // ohne den Durchsatz zu drosseln.
+            // WLAN-Stack atmen lassen. 
+            // Bei 1024 Byte Puffer reicht yield() völlig aus und ist schneller als delay(1).
             yield(); 
         }
     }
@@ -121,7 +118,7 @@ public:
             Serial.println("Web: Upload finished.");
         }, [this]() { 
             HTTPUpload& upload = server.upload();
-            esp_task_wdt_reset();
+            esp_task_wdt_reset(); // Watchdog Reset bei jedem Paket
 
             if (upload.status == UPLOAD_FILE_START) {
                 isSystemUploading = true;
@@ -137,6 +134,9 @@ public:
                     size_t bytesToProcess = upload.currentSize;
                     size_t incomingIndex = 0;
                     while (bytesToProcess > 0) {
+                        // Watchdog auch in der Loop füttern bei großen Paketen
+                        if (bytesToProcess > 2048) esp_task_wdt_reset();
+
                         size_t spaceLeft = UPLOAD_BUFFER_SIZE - bufferPos;
                         size_t chunk = (bytesToProcess < spaceLeft) ? bytesToProcess : spaceLeft;
                         memcpy(buffer + bufferPos, upload.buf + incomingIndex, chunk);
