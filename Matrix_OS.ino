@@ -37,8 +37,7 @@ MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
 SemaphoreHandle_t overlayMutex; 
 volatile bool isBooting = true;
-// NEU: Globaler Schalter für Uploads
-volatile bool isSystemUploading = false; 
+// isSystemUploading brauchen wir nicht mehr -> gelöscht
 
 // --- BOOT LOGIC ---
 struct BootLogEntry { String text; uint16_t color; };
@@ -189,7 +188,6 @@ TaskHandle_t NetworkTask;
 TaskHandle_t DisplayTask;
 
 void networkTaskFunction(void * pvParameters) {
-  // --- SCHRITT 1: Dateisystem prüfen ---
   Serial.println("Boot: Checking Filesystem...");
   status("Check Storage...", display.color565(255, 255, 255));
   
@@ -200,7 +198,6 @@ void networkTaskFunction(void * pvParameters) {
      delay(2000); 
   }
 
-  // --- SCHRITT 2: WLAN Starten ---
   Serial.println("Boot: Connecting to WiFi...");
   status("Connect WiFi...", display.color565(255, 255, 255));
   
@@ -221,12 +218,10 @@ void networkTaskFunction(void * pvParameters) {
   }
   Serial.println();
 
-  // --- SCHRITT 3: IP ---
   String ip = network.getIp();
   status("IP: " + ip, display.color565(0, 255, 0));
   delay(3000);
 
-  // --- SCHRITT 4: WebServer ---
   if (fsMounted) {
       status("Start WebSrv...", display.color565(200, 200, 255));
       webServer.begin(); 
@@ -235,7 +230,6 @@ void networkTaskFunction(void * pvParameters) {
   }
   delay(1000);
 
-  // --- SCHRITT 5: NTP ---
   status("Wait for Time...", display.color565(255, 165, 0));
   network.tryInitServices();
   bool timeSuccess = false;
@@ -277,17 +271,8 @@ void displayTaskFunction(void * pvParameters) {
   const TickType_t xFrequency = pdMS_TO_TICKS(frameDelay);
 
   for(;;) {
-      // --- NEU: DISPLAY PAUSIEREN BEI UPLOAD ---
-      if (isSystemUploading) {
-          // Display schwarz, damit man sieht, dass es "arbeitet"
-          display.clear();
-          display.show();
-          // CPU freigeben für NetworkTask
-          vTaskDelay(100 / portTICK_PERIOD_MS);
-          continue; // Schleife neu starten
-      }
-      // ------------------------------------------
-
+      // --- NORMALE SCHLEIFE (Kein Upload-Stop mehr nötig) ---
+      
       int currentBright = brightness.load();
       display.setBrightness(currentBright);
       
@@ -351,7 +336,7 @@ void displayTaskFunction(void * pvParameters) {
 
 void setup() {
   Serial.begin(115200);
-  delay(4000); // Debug Wartezeit
+  delay(4000); 
 
   overlayMutex = xSemaphoreCreateMutex();
   if (!display.begin()) {
@@ -359,7 +344,7 @@ void setup() {
   }
   
   status("Boot...");
-  // NetworkTask hat jetzt Priorität 4, damit er wichtiger ist als Idle
+  // Prio 4 ist gut für Network, damit Display (Prio 10) Vorfahrt hat, aber Network nicht verhungert
   xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 16000, NULL, 4, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }

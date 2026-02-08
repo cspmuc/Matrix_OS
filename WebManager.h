@@ -7,55 +7,31 @@
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern DisplayManager display; 
 
-// Zugriff auf die globale Pause-Variable (in Matrix_OS.ino definiert)
-extern volatile bool isSystemUploading; 
-
-// WICHTIG: 4096 war zu viel! Das blockiert den Flash zu lange -> WLAN Absturz.
-// 1024 ist der perfekte Kompromiss aus Speed und Stabilität.
-#define UPLOAD_BUFFER_SIZE 1024 
-
 class WebManager {
 private:
     WebServer server;
     File uploadFile;
     
-    uint8_t buffer[UPLOAD_BUFFER_SIZE];
-    size_t bufferPos = 0;
-
-    void flushBuffer() {
-        if (uploadFile && bufferPos > 0) {
-            uploadFile.write(buffer, bufferPos);
-            bufferPos = 0;
-            
-            // Watchdog streicheln
-            esp_task_wdt_reset();
-            
-            // WLAN-Stack atmen lassen. 
-            // Bei 1024 Byte Puffer reicht yield() völlig aus und ist schneller als delay(1).
-            yield(); 
-        }
-    }
+    // KEIN Puffer-Array mehr! Wir nutzen den RAM des ESP effizienter.
 
     String sanitizeFilename(String filename) {
+        // Pfad entfernen
         int lastSlash = filename.lastIndexOf('/');
         if (lastSlash >= 0) filename = filename.substring(lastSlash + 1);
         
+        // Sonderzeichen entfernen & kürzen
         String cleanName = "";
         for (char c : filename) {
-            if (isalnum(c) || c == '.' || c == '_' || c == '-') {
-                cleanName += c;
-            } else {
-                cleanName += '_'; 
-            }
+            if (isalnum(c) || c == '.' || c == '_' || c == '-') cleanName += c;
+            else cleanName += '_'; 
         }
-        
+        // Limitierung auf 30 Zeichen für LittleFS Sicherheit
         if (cleanName.length() > 30) {
             String ext = "";
             int dotIndex = cleanName.lastIndexOf('.');
             if (dotIndex > 0) ext = cleanName.substring(dotIndex);
             cleanName = cleanName.substring(0, 30 - ext.length()) + ext;
         }
-        
         if (!cleanName.startsWith("/")) cleanName = "/" + cleanName;
         return cleanName;
     }
@@ -73,16 +49,13 @@ public:
             size_t used = LittleFS.usedBytes();
             html += "<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>";
             
-            // Format
             html += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles loeschen?\")'>";
             html += "<input type='submit' value='Formatieren (Alles loeschen)' style='color:red'></form>";
             
-            // Upload
             html += "<hr><form method='POST' action='/upload' enctype='multipart/form-data'>";
             html += "<input type='file' name='upload'><input type='submit' value='Upload'>";
             html += "</form><hr>";
 
-            // Liste
             html += "<table border='1'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
             File root = LittleFS.open("/");
             File file = root.openNextFile();
@@ -98,64 +71,51 @@ public:
             server.send(200, "text/html", html);
         });
 
-        // 2. Format
+        // 2. Format Handler
         server.on("/format", HTTP_POST, [this]() {
-            isSystemUploading = true;
-            delay(100);
-            
             forceOverlay("Formatting...", 10, "warn");
+            delay(100); // Kurze Pause vorm Hammer
             LittleFS.format();
-            
-            isSystemUploading = false;
             server.send(200, "text/html", "Formatiert! <a href='/'>Zurueck</a>");
         });
 
-        // 3. Upload Handler
+        // 3. Upload Handler (DIRECT STREAM MODE)
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
-            isSystemUploading = false; 
             forceOverlay("Upload Done", 3, "success"); 
             Serial.println("Web: Upload finished.");
         }, [this]() { 
             HTTPUpload& upload = server.upload();
-            esp_task_wdt_reset(); // Watchdog Reset bei jedem Paket
+            esp_task_wdt_reset();
 
             if (upload.status == UPLOAD_FILE_START) {
-                isSystemUploading = true;
-                delay(100); 
-                
-                bufferPos = 0;
                 String filename = sanitizeFilename(upload.filename);
                 Serial.print("Web: Upload Start: "); Serial.println(filename);
+                
+                // Datei öffnen
                 uploadFile = LittleFS.open(filename, "w");
+                
+                // Overlay Info (Display läuft weiter!)
+                forceOverlay("Uploading...", 60, "warn"); 
             } 
             else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (uploadFile) {
-                    size_t bytesToProcess = upload.currentSize;
-                    size_t incomingIndex = 0;
-                    while (bytesToProcess > 0) {
-                        // Watchdog auch in der Loop füttern bei großen Paketen
-                        if (bytesToProcess > 2048) esp_task_wdt_reset();
-
-                        size_t spaceLeft = UPLOAD_BUFFER_SIZE - bufferPos;
-                        size_t chunk = (bytesToProcess < spaceLeft) ? bytesToProcess : spaceLeft;
-                        memcpy(buffer + bufferPos, upload.buf + incomingIndex, chunk);
-                        bufferPos += chunk;
-                        bytesToProcess -= chunk;
-                        incomingIndex += chunk;
-                        if (bufferPos >= UPLOAD_BUFFER_SIZE) flushBuffer();
-                    }
+                    // DIREKTES SCHREIBEN: Wir schreiben genau das Paket, das reinkommt.
+                    // Das sind meist ~1400 Bytes. Das geht schnell genug für das Display.
+                    uploadFile.write(upload.buf, upload.currentSize);
+                    
+                    // WICHTIG: Das hier erlaubt dem Display-Task, 
+                    // zwischen den Paketen kurz ein Frame zu zeichnen.
+                    yield(); 
                 }
             } 
             else if (upload.status == UPLOAD_FILE_END) {
                 if (uploadFile) {
-                    flushBuffer(); 
                     uploadFile.close();
                     Serial.print("Upload Size: "); Serial.println(upload.totalSize);
                 }
             }
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
-                isSystemUploading = false; 
                 if (uploadFile) {
                     uploadFile.close();
                     Serial.println("Web: Upload Aborted");
@@ -170,14 +130,7 @@ public:
                 String filename = server.arg("name");
                 if(!filename.startsWith("/")) filename = "/" + filename;
                 if (LittleFS.exists(filename)) {
-                    isSystemUploading = true;
-                    delay(100); 
-                    
                     LittleFS.remove(filename);
-                    
-                    delay(10); 
-                    isSystemUploading = false; 
-                    
                     forceOverlay("Deleted", 2, "info");
                     Serial.println("Web: Deleted " + filename);
                 }
