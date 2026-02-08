@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <atomic> // NEU: Für Thread-Sicherheit
 #include "secrets.h"
+#include <FS.h>
+#include <LittleFS.h>
 
 // --- WLAN & MQTT ---
 const char* ssid     = "FBSTA";

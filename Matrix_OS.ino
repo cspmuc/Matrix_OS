@@ -14,6 +14,8 @@
 #include "TickerApp.h"
 #include "PlasmaApp.h"
 #include "RichText.h"
+#include "StorageManager.h" // NEU
+#include "WebManager.h"     // NEU
 
 // Globale Steuerung
 std::atomic<AppMode> currentApp(WORDCLOCK);
@@ -28,6 +30,8 @@ TestPatternApp appTestPattern;
 SensorApp appSensors;
 TickerApp appTicker;
 PlasmaApp appPlasma;
+StorageManager storage;     // NEU
+WebManager webServer;       // NEU
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
@@ -194,60 +198,70 @@ TaskHandle_t NetworkTask;
 TaskHandle_t DisplayTask;
 
 void networkTaskFunction(void * pvParameters) {
-  // 1. WLAN Starten
+  // --- SCHRITT 1: Dateisystem prüfen (Noch vor dem WLAN!) ---
+  // Wir prüfen zuerst, ob der Speicher ok ist (formatiert ggf. automatisch)
+  Serial.println("Boot: Checking Filesystem...");
+  status("Check Storage...", display.color565(255, 255, 255));
+  
+  if (!storage.begin()) {
+     // Falls Formatierung fehlschlägt (sehr unwahrscheinlich), zeigen wir es rot an
+     status("Storage Fail!", display.color565(255, 0, 0));
+     delay(2000);
+  }
+
+  // --- SCHRITT 2: WLAN Starten ---
   Serial.println("Boot: Connecting to WiFi...");
   status("Connect WiFi...", display.color565(255, 255, 255));
   
-  // Initialer Startschuss
   network.begin(); 
-
   int retryCounter = 0;
 
   // Warten bis verbunden
   while(!network.isConnected()) {
-      // Nur Punkte im Serial Monitor, damit man sieht, dass er noch lebt
       Serial.print(".");
-      
       delay(500);
       retryCounter++;
 
-      // NOTFALL-PLAN: Erst nach 20 Versuchen (= 10 Sekunden)
+      // Timeout nach 10 Sekunden -> Adapter Neustart
       if (retryCounter > 20) {
-          Serial.println(); // Neue Zeile im Serial
-          Serial.println("Boot: WiFi took too long. Restarting Adapter...");
-          
-          // Hier lohnt sich eine Meldung, weil wirklich was passiert
+          Serial.println("\nBoot: WiFi took too long. Restarting Adapter...");
           status("Retry WiFi...", display.color565(255, 100, 0));
-          
           WiFi.disconnect();
           delay(100);
           network.begin(); 
           retryCounter = 0; 
       }
   }
+  Serial.println(); // Neue Zeile im Serial nach den Punkten
 
-  Serial.println(); // Abschluss der Punkte-Reihe
-
-  // 2. JETZT sind wir sicher verbunden
+  // --- SCHRITT 3: IP Anzeigen ---
   String ip = network.getIp();
   Serial.print("Boot: WiFi Connected! IP Address: ");
   Serial.println(ip);
 
   status("IP: " + ip, display.color565(0, 255, 0));
-  // Hier lassen wir es kurz stehen, damit man die IP lesen kann
-  delay(3000); 
+  delay(3000); // Kurz warten damit man die IP lesen kann
 
-  // 3. Zeit-Sync
+  // --- SCHRITT 4: WebServer Starten ---
+  // Jetzt wo wir eine IP haben, starten wir den File Manager
+  status("Start WebSrv...", display.color565(200, 200, 255));
+  webServer.begin();
+  delay(1000);
+
+  // --- SCHRITT 5: NTP / Zeit ---
   Serial.println("Boot: Waiting for NTP Time...");
   status("Wait for Time...", display.color565(255, 165, 0));
   
   network.tryInitServices();
   
   bool timeSuccess = false;
-  int ntpRetryCount = 0; 
+  int ntpRetryCount = 0;
   
   while(!timeSuccess) {
-      network.loop(); 
+      // WICHTIG: Hier schon Webserver bedienen!
+      // Falls NTP hängt, kannst du trotzdem schon Dateien hochladen.
+      webServer.handle(); 
+      network.loop();
       
       if (!network.isConnected()) {
           Serial.println("Boot: WiFi Lost during NTP sync!");
@@ -262,7 +276,7 @@ void networkTaskFunction(void * pvParameters) {
       
       delay(100);
       
-      // Timeout für NTP (20 Sekunden)
+      // Timeout für NTP (20 Sekunden) -> Weiter ohne Zeit
       if(ntpRetryCount++ > 200) { 
            Serial.println("Boot: NTP Timeout - Continuing without Sync");
            break;
@@ -273,15 +287,18 @@ void networkTaskFunction(void * pvParameters) {
   status("Start in 3s", display.color565(255, 255, 255));
   delay(3000);
 
-  // Boot Modus beenden
+  // Boot Modus beenden (Display freigeben)
   if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
     isBooting = false;
     xSemaphoreGive(overlayMutex);
   }
   
-  // Normaler Loop
+  // --- SCHRITT 6: Endlos-Loop ---
   for(;;) {
-    network.loop();
+    network.loop();       // MQTT & OTA am Leben halten
+    webServer.handle();   // Web Interface bedienen (File Manager)
+    
+    // Kleines Delay, damit der Task nicht 100% CPU frisst
     vTaskDelay((otaActive ? 1 : 10) / portTICK_PERIOD_MS);
   }
 }
