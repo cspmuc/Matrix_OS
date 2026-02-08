@@ -1,12 +1,13 @@
 #pragma once
 #include <WebServer.h>
 #include <LittleFS.h>
+#include <esp_task_wdt.h> // WICHTIG: Für den Watchdog Reset
 #include "config.h"
 
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern DisplayManager display; 
 
-// Puffergröße: 4KB ist ein guter Kompromiss aus Speed und RAM-Verbrauch
+// 4KB Puffer ist gut, aber wir müssen dem System Zeit geben, ihn zu schreiben
 #define UPLOAD_BUFFER_SIZE 4096 
 
 class WebManager {
@@ -14,15 +15,18 @@ private:
     WebServer server;
     File uploadFile;
     
-    // NEU: Interner Puffer
     uint8_t buffer[UPLOAD_BUFFER_SIZE];
     size_t bufferPos = 0;
 
-    // Hilfsfunktion: Puffer leeren (auf Flash schreiben)
     void flushBuffer() {
         if (uploadFile && bufferPos > 0) {
             uploadFile.write(buffer, bufferPos);
             bufferPos = 0;
+            
+            // WICHTIG: Hier dem System Luft geben!
+            // Das erlaubt dem TCP-Stack, Bestätigungspakete (ACK) zu senden,
+            // während wir auf den langsamen Flash warten.
+            yield(); 
         }
     }
 
@@ -58,20 +62,19 @@ public:
             server.send(200, "text/html", html);
         });
 
-        // 2. Upload Handler (BUFFERED)
+        // 2. Upload Handler (Stabilisiert)
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
             forceOverlay("Upload Done", 3, "success"); 
             Serial.println("Web: Upload finished.");
-            
         }, [this]() { 
             HTTPUpload& upload = server.upload();
             
-            // --- START ---
-            if (upload.status == UPLOAD_FILE_START) {
-                // Buffer Reset
-                bufferPos = 0;
+            // Watchdog füttern, damit er bei großen Dateien nicht zubeißt
+            esp_task_wdt_reset();
 
+            if (upload.status == UPLOAD_FILE_START) {
+                bufferPos = 0;
                 size_t freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
                 if (freeSpace < 10000) { 
                      forceOverlay("Disk Full!", 5, "warn");
@@ -86,43 +89,37 @@ public:
                 
                 uploadFile = LittleFS.open(filename, "w");
             } 
-            // --- WRITE (Buffered) ---
             else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (uploadFile) {
-                    // Daten in den Puffer kopieren
                     size_t bytesToProcess = upload.currentSize;
                     size_t incomingIndex = 0;
                     
                     while (bytesToProcess > 0) {
-                        // Wieviel Platz ist noch im Puffer?
+                        // Auch innerhalb der Kopier-Schleife kurz atmen
+                        if (bytesToProcess % 1024 == 0) yield();
+
                         size_t spaceLeft = UPLOAD_BUFFER_SIZE - bufferPos;
-                        
-                        // Wieviel können wir kopieren?
                         size_t chunk = (bytesToProcess < spaceLeft) ? bytesToProcess : spaceLeft;
                         
-                        // Kopieren
                         memcpy(buffer + bufferPos, upload.buf + incomingIndex, chunk);
                         
                         bufferPos += chunk;
                         bytesToProcess -= chunk;
                         incomingIndex += chunk;
                         
-                        // Wenn voll -> Schreiben & Leeren
                         if (bufferPos >= UPLOAD_BUFFER_SIZE) {
                             flushBuffer();
                         }
                     }
                 }
             } 
-            // --- END ---
             else if (upload.status == UPLOAD_FILE_END) {
                 if (uploadFile) {
-                    flushBuffer(); // Rest schreiben
+                    flushBuffer(); 
                     uploadFile.close();
                     Serial.print("Upload Size: "); Serial.println(upload.totalSize);
                 }
             }
-            // --- ABORT ---
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
                 if (uploadFile) {
                     uploadFile.close();
@@ -133,7 +130,7 @@ public:
             }
         });
 
-        // 3. Delete Handler (Code unverändert)
+        // 3. Delete Handler
         server.on("/delete", HTTP_GET, [this]() {
             if (server.hasArg("name")) {
                 String filename = server.arg("name");

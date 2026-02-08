@@ -382,7 +382,7 @@ void setup() {
   }
   
   status("Boot...");
-  xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 16000, NULL, 0, &NetworkTask, 0);
+  xTaskCreatePinnedToCore(networkTaskFunction, "NetworkTask", 16000, NULL, 2, &NetworkTask, 0);
   xTaskCreatePinnedToCore(displayTaskFunction, "DisplayTask", 10000, NULL, 10, &DisplayTask, 1);
 }
 
