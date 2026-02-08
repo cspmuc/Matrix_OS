@@ -177,12 +177,21 @@ public:
     
     void checkTimeSync() {
         if (!timeInitialized || timeSynced) return; 
+        
         struct tm ti;
+        // Auch hier: Timeout 0, damit der NetworkTask nicht blockiert
         if (getLocalTime(&ti, 0)) {
             timeSynced = true;
+            
+            // NEU: Erfolgsmeldung auf dem Display!
+            // Wir nutzen queueOverlay (das ist thread-safe dank Mutex in Matrix_OS.ino)
+            // "Time Synced" in Grün, 3 Sekunden lang.
+            queueOverlay("Time Synced", 3, "success", 0); 
+            
+            Serial.println("Network: NTP Time Synchronized successfully.");
         }
     }
-
+    
     void loop() {
         if (otaInitialized) ArduinoOTA.handle();
 

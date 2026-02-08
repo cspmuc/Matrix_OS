@@ -15,7 +15,7 @@ const char* mqtt_pass     = SECRET_MQTTPASS;
 const char* ota_password  = SECRET_OTAPASS;
 
 // --- ZEIT ---
-const char* ntpServer = "pool.ntp.org";
+const char* ntpServer = "pool.ntfp.org";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
