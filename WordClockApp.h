@@ -13,7 +13,15 @@ private:
 public:
     void draw(DisplayManager& display) override {
         struct tm ti;
-        if(!getLocalTime(&ti)) return;
+        
+        // NEU: Fallback, wenn keine Zeit da ist (z.B. nach NTP Timeout beim Boot)
+        if(!getLocalTime(&ti)) {
+            // Zeigt "NTP not synced" zentriert in Rot an
+            // y=36 ist optisch mittig für den Small Font
+            richText.drawCentered(display, 36, "{c:red}NTP not synced", "Small");
+            return;
+        }
+
         int h = ti.tm_hour, m = ti.tm_min, mR = (m / 5) * 5; 
         int s = h % 12, nextS = (s + 1) % 12;
 

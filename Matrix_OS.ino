@@ -74,6 +74,10 @@ void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed
 }
 
 void status(const String& msg, uint16_t color = 0xFFFF) {
+  // NEU: Ausgabe auch auf dem Serial Monitor
+  Serial.print("[STATUS] ");
+  Serial.println(msg);
+
   if (overlayMutex && xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
     if (isBooting) {
       char buf[64];
@@ -190,47 +194,77 @@ TaskHandle_t NetworkTask;
 TaskHandle_t DisplayTask;
 
 void networkTaskFunction(void * pvParameters) {
-  while (true) {
-      status("Connect WiFi...", display.color565(255, 255, 255));
-      while(!network.isConnected()) {
-          if (network.begin()) {
-             String ip = network.getIp();
-             status("IP: " + ip, display.color565(0, 255, 0));
-             delay(2500); 
-             break; 
-          } else {
-             status("WiFi Retry 5s...", display.color565(255, 0, 0));
-             delay(5000); 
-          }
-      }
+  // 1. WLAN Starten
+  Serial.println("Boot: Connecting to WiFi...");
+  status("Connect WiFi...", display.color565(255, 255, 255));
+  
+  // Initialer Verbindungsversuch
+  network.begin(); 
 
-      status("Wait for Time...", display.color565(255, 165, 0));
-      network.tryInitServices(); 
+  // Warten bis verbunden (Schleife läuft solange NICHT verbunden)
+  while(!network.isConnected()) {
+      Serial.println("Boot: Waiting for WiFi...");
+      status("Wait for WiFi...", display.color565(255, 0, 0));
+      delay(500);
       
-      bool timeSuccess = false;
-      while(!timeSuccess) {
-          network.loop();
-          if (!network.isConnected()) {
-              status("WiFi Lost!", display.color565(255, 0, 0));
-              delay(1000);
-              break; 
-          }
-          if (network.isTimeSynced()) {
-              timeSuccess = true;
-          }
-          delay(100);
-      }
-      if (timeSuccess) break;
+      // Falls Verbindung verloren ging, neu triggern
+      if (!network.isConnected()) network.begin();
   }
 
+  // 2. JETZT sind wir sicher verbunden -> IP IMMER anzeigen
+  // Da wir aus der Schleife raus sind, besteht eine Verbindung.
+  String ip = network.getIp();
+  Serial.print("Boot: WiFi Connected! IP Address: ");
+  Serial.println(ip);
+
+  status("IP: " + ip, display.color565(0, 255, 0));
+  delay(3000); // Kurz warten damit man es auf dem Display lesen kann
+
+  // 3. Zeit-Sync
+  Serial.println("Boot: Waiting for NTP Time...");
+  status("Wait for Time...", display.color565(255, 165, 0));
+  
+  network.tryInitServices();
+  
+  bool timeSuccess = false;
+  int retryCount = 0; 
+  
+  while(!timeSuccess) {
+      network.loop();
+      
+      if (!network.isConnected()) {
+          Serial.println("Boot: WiFi Lost during NTP sync!");
+          status("WiFi Lost!", display.color565(255, 0, 0));
+          delay(1000);
+          // Optional: ESP.restart(); falls das kritisch ist
+      }
+      
+      if (network.isTimeSynced()) {
+          Serial.println("Boot: Time Synced successfully.");
+          timeSuccess = true;
+      }
+      
+      delay(100);
+      // Timeout-Schutz: Nach ca. 20 Sekunden (200 * 100ms) aufgeben
+      if(retryCount++ > 200) { 
+           Serial.println("Boot: NTP Timeout - Continuing without Sync");
+           status("Time Timeout", display.color565(255, 0, 0));
+           delay(1000);
+           break;
+      }
+  }
+
+  Serial.println("Boot: Sequence finished. Starting App.");
   status("Start in 3s", display.color565(255, 255, 255));
   delay(3000);
 
+  // Boot Modus beenden (Display freigeben)
   if (xSemaphoreTake(overlayMutex, portMAX_DELAY) == pdTRUE) {
     isBooting = false;
     xSemaphoreGive(overlayMutex);
   }
   
+  // Endlosschleife für den Netzwerk-Task
   for(;;) {
     network.loop();
     vTaskDelay((otaActive ? 1 : 10) / portTICK_PERIOD_MS);
