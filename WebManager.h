@@ -15,12 +15,13 @@ private:
     // KEIN Puffer-Array mehr! Wir nutzen den RAM des ESP effizienter.
 
     String sanitizeFilename(String filename) {
-        // Pfad entfernen
         int lastSlash = filename.lastIndexOf('/');
         if (lastSlash >= 0) filename = filename.substring(lastSlash + 1);
         
-        // Sonderzeichen entfernen & kürzen
+        // Performance: Speicher vorab reservieren
         String cleanName = "";
+        cleanName.reserve(filename.length() + 1); 
+        
         for (char c : filename) {
             if (isalnum(c) || c == '.' || c == '_' || c == '-') cleanName += c;
             else cleanName += '_'; 

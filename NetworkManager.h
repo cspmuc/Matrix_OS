@@ -39,9 +39,9 @@ private:
         String t = String(topic);
         
         // JSON Puffer
-        StaticJsonDocument<2048> doc;
+        DynamicJsonDocument doc(2560); // Ruhig etwas mehr Reserve geben
         DeserializationError error = deserializeJson(doc, payload, length);
-
+        
         if (error) {
              // Fallback für einfache Strings (Power CMD)
              String msg = "";
@@ -191,7 +191,7 @@ public:
             Serial.println("Network: NTP Time Synchronized successfully.");
         }
     }
-    
+
     void loop() {
         if (otaInitialized) ArduinoOTA.handle();
 
