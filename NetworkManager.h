@@ -9,18 +9,14 @@
 
 extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
-extern volatile bool otaActive;
-extern volatile int otaProgress;
 
 class MatrixNetworkManager {
 private:
     WiFiClient espClient;
     PubSubClient client;
     
-    // CLEANUP: Keine Atomic Referenzen mehr
     AppMode& currentAppRef;
     int& brightnessRef;
-    
     DisplayManager& displayRef;
     SensorApp& sensorAppRef; 
 
@@ -35,12 +31,11 @@ private:
     unsigned long lastMqttRetry = 0;
     unsigned long lastTimeCheck = 0;
 
+    // ... (handleMqttMessage & CallbackTrampoline bleiben unverändert) ...
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
-        // (Logik bleibt gleich, aber Zugriff auf Refs ist einfacher)
         String t = String(topic);
         DynamicJsonDocument doc(2560); 
         DeserializationError error = deserializeJson(doc, payload, length);
-        
         if (error) {
              String msg = "";
              for (int i = 0; i < length; i++) msg += (char)payload[i];
@@ -51,12 +46,10 @@ private:
              }
              return;
         }
-
         if (t == "matrix/cmd/brightness" && doc.containsKey("val")) {
             brightnessRef = doc["val"].as<int>();
             publishState();
         }
-        
         if (t == "matrix/cmd/app" && doc.containsKey("app")) {
             String newApp = doc["app"];
             if (newApp == "wordclock") currentAppRef = WORDCLOCK;
@@ -67,7 +60,6 @@ private:
             else if (newApp == "off") currentAppRef = OFF;
             publishState(); 
         }     
-
         if (t == "matrix/cmd/overlay") {
              String msg = doc["msg"] | "";
              int dur = doc["duration"] | 5;    
@@ -75,9 +67,7 @@ private:
              int speed = doc["speed"] | 30; 
              if (msg.length() > 0) queueOverlay(msg, dur, col, speed);
         }
-
         if (t == "matrix/cmd/sensor_page") {
-            // (Sensor Code bleibt gleich)
             String id = doc["id"] | "default";
             String title = doc["title"] | "INFO";
             int ttl = doc["ttl"] | 60; 
@@ -99,7 +89,6 @@ private:
     }
 
 public:
-    // CLEANUP: Konstruktor Signatur angepasst (kein std::atomic)
     MatrixNetworkManager(AppMode& app, int& bright, DisplayManager& disp, SensorApp& sensors) 
         : client(espClient), currentAppRef(app), brightnessRef(bright), displayRef(disp), sensorAppRef(sensors) {
         instance = this;
@@ -142,18 +131,80 @@ public:
         }
     }
 
+    // --- HIER IST DER FIX FÜR OTA ---
     void setupOTA() {
         ArduinoOTA.setHostname("Wortuhr-Matrix-OS");
         ArduinoOTA.setPassword(ota_password);
-        ArduinoOTA.onStart([]() { otaActive = true; otaProgress = 0; });
-        ArduinoOTA.onEnd([]() { otaActive = false; });
-        ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-            otaProgress = (progress / (total / 100));
+
+        // 1. START: Statische Meldung + Screen Clear
+        ArduinoOTA.onStart([this]() { 
+            // WICHTIG: Da wir im Single Core sind, dürfen wir hier direkt zeichnen!
+            displayRef.setBrightness(150); // Sicherstellen dass man was sieht
+            displayRef.setFade(1.0);
+            displayRef.clear();
+            
+            displayRef.setTextColor(displayRef.color565(255, 255, 0)); // Gelb
+            displayRef.printCentered("SYSTEM UPDATE", 20);
+            displayRef.printCentered("BITTE WARTEN...", 40);
+            
+            displayRef.show(); // Zeigt das Bild sofort an
         });
-        ArduinoOTA.onError([](ota_error_t error) { otaActive = false; });
+
+        // 2. ENDE: Erfolgsmeldung + Delay vor Reboot
+        ArduinoOTA.onEnd([this]() { 
+            displayRef.clear();
+            displayRef.setTextColor(displayRef.color565(0, 255, 0)); // Grün
+            displayRef.printCentered("UPDATE SUCCESS!", 32);
+            displayRef.show();
+            
+            // Hier das gewünschte Delay, damit man es lesen kann
+            delay(2000); 
+        });
+
+        // 3. PROGRESS: Balken aktualisieren (Optional, aber schön)
+        // ArduinoOTA ruft das oft genug auf, dass es animiert wirkt.
+        ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
+            int p = (progress / (total / 100));
+            
+            // Nur alle 2% zeichnen, spart etwas Zeit, sieht aber flüssig aus
+            if (p % 2 == 0) {
+                displayRef.clear();
+                displayRef.setTextColor(displayRef.color565(255, 255, 0));
+                displayRef.printCentered("UPDATING...", 15);
+                
+                // Balken zeichnen
+                int w = map(p, 0, 100, 0, 100);
+                displayRef.drawRect(14, 35, 102, 12, displayRef.color565(100, 100, 100)); // Rahmen
+                displayRef.fillRect(15, 36, w, 10, displayRef.color565(0, 255, 0));       // Füllung
+                
+                // Prozentzahl
+                String s = String(p) + "%";
+                displayRef.printCentered(s, 55);
+                
+                displayRef.show();
+            }
+        });
+
+        // 4. ERROR: Fehlermeldung
+        ArduinoOTA.onError([this](ota_error_t error) { 
+            displayRef.clear();
+            displayRef.setTextColor(displayRef.color565(255, 0, 0)); // Rot
+            displayRef.printCentered("UPDATE ERROR!", 25);
+            
+            if (error == OTA_AUTH_ERROR) displayRef.printCentered("Auth Failed", 45);
+            else if (error == OTA_BEGIN_ERROR) displayRef.printCentered("Begin Failed", 45);
+            else if (error == OTA_CONNECT_ERROR) displayRef.printCentered("Connect Failed", 45);
+            else if (error == OTA_RECEIVE_ERROR) displayRef.printCentered("Receive Failed", 45);
+            else if (error == OTA_END_ERROR) displayRef.printCentered("End Failed", 45);
+            
+            displayRef.show();
+            delay(3000); // Zeit zum Lesen lassen
+        });
+
         ArduinoOTA.begin();
     }
     
+    // ... (Rest bleibt gleich) ...
     void checkTimeSync() {
         if (!timeInitialized || timeSynced) return; 
         struct tm ti;
@@ -165,7 +216,7 @@ public:
     }
 
     void loop() {
-        if (otaInitialized) ArduinoOTA.handle();
+        if (otaInitialized) ArduinoOTA.handle(); // Hierin passiert jetzt das Zeichnen!
 
         unsigned long now = millis();
         if (WiFi.status() != WL_CONNECTED) {
@@ -203,11 +254,9 @@ public:
         if (!client.connected()) return;
         if (brightnessRef > 0) client.publish("matrix/status", "ON", true);
         else client.publish("matrix/status", "OFF", true);
-        
-        // CLEANUP: .load() entfernt
         client.publish("matrix/status/brightness", String(brightnessRef).c_str(), true);
         String appStr;
-        switch(currentAppRef) { // CLEANUP: .load() entfernt
+        switch(currentAppRef) {
             case WORDCLOCK:   appStr = "wordclock"; break;
             case SENSORS:     appStr = "sensors"; break;
             case TESTPATTERN: appStr = "testpattern"; break;

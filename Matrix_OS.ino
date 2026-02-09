@@ -2,7 +2,7 @@
 #include <math.h>
 #include <vector>
 #include <deque>
-#include "config.h" // CLEANUP: Kein <atomic> mehr nötig
+#include "config.h"
 
 // Includes
 #include "DisplayManager.h"
@@ -16,11 +16,9 @@
 #include "StorageManager.h" 
 #include "WebManager.h"     
 
-// CLEANUP: Globale Variablen (Standard Typen)
 AppMode currentApp = WORDCLOCK;
 int brightness = 150; 
 
-// Objekte
 DisplayManager display;
 RichText richTextOverlay; 
 
@@ -34,21 +32,17 @@ WebManager webServer;
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
-// CLEANUP: Mutexe gelöscht
-// SemaphoreHandle_t appDataMutex; 
-// SemaphoreHandle_t overlayMutex; 
-
-// Status Variablen
 bool isBooting = true;
-volatile bool otaActive = false;
-volatile int otaProgress = 0;
+// CLEANUP: Diese Variablen werden hier nicht mehr gebraucht,
+// da NetworkManager das Zeichnen intern regelt.
+// volatile bool otaActive = false; 
+// volatile int otaProgress = 0;
 
-// --- BOOT LOGIC ---
+// ... (BootLogEntry, Overlay Structs etc. bleiben gleich) ...
 struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
 
-// --- OVERLAY SYSTEM ---
 struct OverlayMessage {
     String text;
     int durationSec;
@@ -61,12 +55,12 @@ unsigned long overlayStartTime = 0;
 unsigned long overlayEndTime = 0;
 OverlayMessage currentOverlay;
 
-const int frameDelay = 16; // ~60 FPS
+const int frameDelay = 16; 
 float fadeVal = 1.0;
 const float fadeStep = 0.05; 
 AppMode displayedApp = WORDCLOCK;
 
-// --- HILFSFUNKTIONEN (Clean, kein Mutex) ---
+// ... (Hilfsfunktionen queueOverlay, forceOverlay, status, processAndDrawOverlay bleiben gleich) ...
 
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
     if (overlayQueue.size() < 5) {
@@ -87,8 +81,6 @@ void status(const String& msg, uint16_t color = 0xFFFF) {
       sprintf(buf, "%02d %s", bootLogCounter++, msg.c_str());
       bootLogs.push_back({String(buf), color});
       if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
-      
-      // Sofortiges Zeichnen im Boot-Modus für Feedback
       display.clear();
       display.setFade(1.0);
       display.setTextSize(1);
@@ -107,14 +99,10 @@ void status(const String& msg, uint16_t color = 0xFFFF) {
   }
 }
 
-// --- LOGIK: OVERLAY ---
 void processAndDrawOverlay(DisplayManager& display) {
     unsigned long now = millis();
-    
     if (isOverlayActive) {
-        if (now > overlayEndTime) {
-            isOverlayActive = false;
-        }
+        if (now > overlayEndTime) isOverlayActive = false;
     }
     if (!isOverlayActive && !overlayQueue.empty()) {
         currentOverlay = overlayQueue.front();
@@ -123,21 +111,14 @@ void processAndDrawOverlay(DisplayManager& display) {
         overlayStartTime = now;
         overlayEndTime = now + (currentOverlay.durationSec * 1000);
     }
-
     if (isOverlayActive) {
         String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
         int textW = richTextOverlay.getTextWidth(display, finalMsg, "Medium");
-        int boxH = 34;
-        int boxW = 104; 
+        int boxH = 34; int boxW = 104; 
         bool isScrolling = false;
-        if (textW > (boxW - 10)) {
-            boxW = M_WIDTH;
-            isScrolling = true;
-        }
-
+        if (textW > (boxW - 10)) { boxW = M_WIDTH; isScrolling = true; }
         int boxX = (M_WIDTH - boxW) / 2;
         int boxY = (M_HEIGHT - boxH) / 2;
-
         display.dimRect(boxX, boxY, boxW, boxH); 
         display.drawRect(boxX, boxY, boxW, boxH, display.color565(80, 80, 80));
         int textY = boxY + (boxH / 2) + 5;
@@ -152,7 +133,6 @@ void processAndDrawOverlay(DisplayManager& display) {
             int currentScrollX = startX - ((int)pixelsMoved % totalDist);
             richTextOverlay.drawString(display, currentScrollX, textY, finalMsg, "Medium");
         }
-        
         int totalDur = currentOverlay.durationSec * 1000;
         long remaining = overlayEndTime - now;
         if (remaining > 0) {
@@ -162,18 +142,13 @@ void processAndDrawOverlay(DisplayManager& display) {
     }
 }
 
-// --- SETUP (Linearer Ablauf) ---
+// --- SETUP ---
 void setup() {
   Serial.begin(115200);
   delay(1000); 
 
-  // CLEANUP: Keine Mutex Initialisierung mehr nötig
+  if (!display.begin()) while(1);
   
-  if (!display.begin()) {
-    while(1);
-  }
-  
-  // 1. Filesystem
   status("Check Storage...", display.color565(255, 255, 255));
   bool fsMounted = storage.begin();
   if (!fsMounted) {
@@ -181,7 +156,6 @@ void setup() {
      delay(1000); 
   }
 
-  // 2. WiFi Connect
   status("Connect WiFi...", display.color565(255, 255, 255));
   network.begin(); 
   
@@ -201,13 +175,11 @@ void setup() {
   status("IP: " + network.getIp(), display.color565(0, 255, 0));
   delay(1000);
 
-  // 3. Webserver
   if (fsMounted) {
       status("Start WebSrv...", display.color565(200, 200, 255));
       webServer.begin(); 
   }
 
-  // 4. Zeit-Sync
   status("Wait for Time...", display.color565(255, 165, 0));
   network.tryInitServices();
   
@@ -221,8 +193,6 @@ void setup() {
   status("System Ready", display.color565(0, 255, 0));
   delay(1000);
   isBooting = false;
-  
-  // CLEANUP: Keine Tasks mehr starten! Die loop() übernimmt alles.
 }
 
 // --- MAIN LOOP ---
@@ -230,18 +200,18 @@ void loop() {
     unsigned long now = millis();
 
     // A. NETZWERK & LOGIK
+    // Wenn hier ein OTA Update läuft, zeichnet 'network.loop' jetzt selbständig!
     network.loop();
     webServer.handle(); 
 
-    // B. DISPLAY UPDATE (Begrenzt auf ~60 FPS)
+    // B. DISPLAY UPDATE (Normalbetrieb)
     static unsigned long lastFrameTime = 0;
     if (now - lastFrameTime >= frameDelay) {
         lastFrameTime = now;
 
-        // 1. Helligkeit & Fade
-        display.setBrightness(brightness); // CLEANUP: Kein .load()
+        display.setBrightness(brightness);
         
-        AppMode targetApp = currentApp; // CLEANUP: Kein .load()
+        AppMode targetApp = currentApp;
         if (displayedApp != targetApp) {
             fadeVal -= fadeStep;
             if (fadeVal <= 0.0) {
@@ -258,30 +228,20 @@ void loop() {
 
         display.clear();
 
-        // 2. OTA Screen
-        if (otaActive) {
-            display.setFade(1.0);
-            display.setTextColor(display.color565(255, 255, 0));
-            display.printCentered("SYSTEM UPDATE", 15);
-            display.drawRect(14, 35, 100, 12, display.color565(100, 100, 100));
-            int w = map(otaProgress, 0, 100, 0, 96);
-            display.fillRect(16, 37, w, 8, display.color565(0, 255, 0));
-            String p = String(otaProgress) + "%";
-            display.printCentered(p, 50);
-        }
-        // 3. Normale Apps
-        else {
-             if (brightness > 0) {
-                 switch(displayedApp) {
-                   case WORDCLOCK:   appWordClock.draw(display);   break;
-                   case SENSORS:     appSensors.draw(display);     break;
-                   case TESTPATTERN: appTestPattern.draw(display); break;
-                   case TICKER:      appTicker.draw(display);      break;
-                   case PLASMA:      appPlasma.draw(display);      break;
-                   case OFF:         /* Clear */                   break;
-                 }
-                 processAndDrawOverlay(display);
+        // CLEANUP: Der alte OTA-Zeichen-Block ist hier komplett weg.
+        // Das Display wird nun nur noch von Apps gesteuert, wenn KEIN Update läuft.
+        // (Während des Updates blockiert network.loop() eh die Ausführung bis hierher).
+        
+        if (brightness > 0) {
+             switch(displayedApp) {
+               case WORDCLOCK:   appWordClock.draw(display);   break;
+               case SENSORS:     appSensors.draw(display);     break;
+               case TESTPATTERN: appTestPattern.draw(display); break;
+               case TICKER:      appTicker.draw(display);      break;
+               case PLASMA:      appPlasma.draw(display);      break;
+               case OFF:         /* Clear */                   break;
              }
+             processAndDrawOverlay(display);
         }
         display.show();
     }
