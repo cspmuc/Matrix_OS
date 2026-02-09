@@ -12,9 +12,11 @@ private:
     WebServer server;
     File uploadFile;
     
-    // NEU: Variablen für stabilen Upload-Balken
     size_t uploadBytesWritten = 0;
-    int lastUploadPercent = -1;
+    unsigned long lastDrawTime = 0;
+    
+    // NEU: Fehler-Flag
+    bool uploadError = false;
 
     String sanitizeFilename(String filename) {
         int lastSlash = filename.lastIndexOf('/');
@@ -38,35 +40,31 @@ private:
         return cleanName;
     }
 
-    // Optimierte Zeichenfunktion (Anti-Flicker)
-    void drawUploadProgress(String filename, size_t current, size_t total) {
-        int percent = 0;
-        if (total > 0) {
-            percent = (int)((current * 100) / total);
-            if (percent > 100) percent = 100;
-        }
-
-        // TRICK: Nur zeichnen, wenn sich Prozent ändert! 
-        // Das verhindert das Flickern komplett.
-        if (percent == lastUploadPercent && current > 0) return; 
-        lastUploadPercent = percent;
+    void drawUploadStats(String filename, size_t current, bool isError = false) {
+        if (!isError && (millis() - lastDrawTime < 100)) return;
+        lastDrawTime = millis();
 
         display.clear();
-        display.setTextColor(display.color565(0, 200, 255)); // Cyan
-        display.printCentered("FILE UPLOAD", 15);
         
-        // Dateiname gekürzt anzeigen
-        String shortName = filename;
-        if (shortName.length() > 16) shortName = "..." + shortName.substring(shortName.length()-13);
-        
-        display.setTextColor(display.color565(150, 150, 150));
-        display.printCentered(shortName, 55);
+        if (isError) {
+            display.setTextColor(display.color565(255, 0, 0)); // Rot
+            display.printCentered("ERROR", 15);
+            display.setTextColor(display.color565(255, 255, 255));
+            display.printCentered("Disk Full!", 35);
+        } else {
+            display.setTextColor(display.color565(0, 200, 255)); // Cyan
+            display.printCentered("UPLOADING", 15);
+            
+            String shortName = filename;
+            if (shortName.length() > 16) shortName = "..." + shortName.substring(shortName.length()-13);
+            display.setTextColor(display.color565(150, 150, 150)); 
+            display.printCentered(shortName, 35);
 
-        // Balken zeichnen
-        if (total > 0) {
-            int w = map(percent, 0, 100, 0, 100);
-            display.drawRect(14, 30, 102, 12, display.color565(80, 80, 80)); // Rahmen
-            display.fillRect(15, 31, w, 10, display.color565(0, 200, 255)); // Füllung
+            display.setTextColor(display.color565(255, 255, 255)); 
+            String sizeStr;
+            if (current < 1024) sizeStr = String(current) + " B";
+            else sizeStr = String(current / 1024) + " KB";
+            display.printCentered(sizeStr, 55);
         }
         
         display.show();
@@ -125,50 +123,84 @@ public:
             LittleFS.format();
             
             server.send(200, "text/html", "Formatiert! <a href='/'>Zurueck</a>");
-            forceOverlay("Format Done", 3, "success");
+            forceOverlay("Format OK", 3, "success");
         });
 
-        // 3. Upload Handler (Stabilisiert)
+        // 3. Upload Handler (MIT SICHERHEITS-CHECK)
         server.on("/upload", HTTP_POST, [this]() {
-            server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
-            
-            // Overlay wird erst angezeigt, wenn der Loop wieder läuft
-            forceOverlay("Upload Complete", 4, "success"); 
-            Serial.println("Web: Upload finished.");
+            // HIER entscheidet sich, was der Browser sieht
+            if (uploadError) {
+                // Fehler senden
+                server.send(507, "text/plain", "Error: Disk Full or Write Failed");
+                // Overlay wurde bereits im Loop auf "Disk Full" gesetzt
+                Serial.println("Web: Upload FAILED.");
+            } else {
+                // Alles gut
+                server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
+                forceOverlay("Upload OK", 3, "success"); 
+                Serial.println("Web: Upload finished successfully.");
+            }
             
         }, [this]() { 
             HTTPUpload& upload = server.upload();
             esp_task_wdt_reset();
 
             if (upload.status == UPLOAD_FILE_START) {
+                uploadError = false; // Reset Fehlerstatus
                 String filename = sanitizeFilename(upload.filename);
-                Serial.print("Web: Upload Start: "); Serial.println(filename);
                 
+                // CHECK 1: Passt die Datei überhaupt drauf?
+                size_t freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
+                if (upload.totalSize > freeSpace) {
+                    Serial.println("Web: File too big for Flash!");
+                    uploadError = true;
+                    forceOverlay("Disk Full", 5, "warn");
+                    return; // Nicht öffnen
+                }
+
+                Serial.print("Web: Upload Start: "); Serial.println(filename);
                 uploadFile = LittleFS.open(filename, "w");
                 
-                // Reset Zähler
                 uploadBytesWritten = 0; 
-                lastUploadPercent = -1;
-                
+                lastDrawTime = 0; 
                 display.setBrightness(150);
-                drawUploadProgress(filename, 0, 100);
+                drawUploadStats(filename, 0);
             } 
             else if (upload.status == UPLOAD_FILE_WRITE) {
+                // Wenn schon ein Fehler vorliegt, ignorieren wir den Rest der Daten
+                if (uploadError) return;
+
                 if (uploadFile) {
-                    uploadFile.write(upload.buf, upload.currentSize);
+                    // CHECK 2: Schreiben versuchen und Ergebnis prüfen
+                    size_t bytesWritten = uploadFile.write(upload.buf, upload.currentSize);
                     
-                    // Manuell zählen statt upload.index nutzen (das fehlte in der Lib)
-                    uploadBytesWritten += upload.currentSize; 
-                    
-                    drawUploadProgress(upload.filename, uploadBytesWritten, upload.totalSize);
-                    
+                    if (bytesWritten < upload.currentSize) {
+                        // Oha, Flash ist voll gelaufen!
+                        Serial.println("Web: Write failed (Disk Full?)");
+                        uploadError = true;
+                        uploadFile.close();
+                        
+                        // Kaputte Datei löschen
+                        LittleFS.remove("/" + sanitizeFilename(upload.filename));
+                        
+                        drawUploadStats("ERROR", 0, true); // Zeige Fehler am Display
+                        return;
+                    }
+
+                    uploadBytesWritten += bytesWritten;
+                    drawUploadStats(upload.filename, uploadBytesWritten);
                     delay(1); 
                 }
             } 
             else if (upload.status == UPLOAD_FILE_END) {
                 if (uploadFile) {
                     uploadFile.close();
-                    Serial.print("Upload Size: "); Serial.println(upload.totalSize);
+                    if (!uploadError) {
+                        Serial.print("Upload Size: "); Serial.println(uploadBytesWritten);
+                        // Final Draw
+                        lastDrawTime = 0; 
+                        drawUploadStats(upload.filename, uploadBytesWritten);
+                    }
                 }
             }
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
@@ -176,11 +208,8 @@ public:
                     uploadFile.close();
                     LittleFS.remove("/" + upload.filename); 
                 }
-                display.clear();
-                display.setTextColor(display.color565(255, 0, 0));
-                display.printCentered("UPLOAD FAILED", 32);
-                display.show();
-                delay(2000);
+                uploadError = true;
+                drawUploadStats("ABORTED", 0, true);
             }
         });
 
