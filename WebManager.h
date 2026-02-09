@@ -11,8 +11,11 @@ class WebManager {
 private:
     WebServer server;
     File uploadFile;
+    
+    // NEU: Variablen für stabilen Upload-Balken
+    size_t uploadBytesWritten = 0;
+    int lastUploadPercent = -1;
 
-    // Optimierte Version: Weniger Speicherfragmentierung
     String sanitizeFilename(String filename) {
         int lastSlash = filename.lastIndexOf('/');
         if (lastSlash >= 0) filename = filename.substring(lastSlash + 1);
@@ -25,7 +28,6 @@ private:
             else cleanName += '_'; 
         }
         
-        // Limitierung auf 30 Zeichen für LittleFS Sicherheit
         if (cleanName.length() > 30) {
             String ext = "";
             int dotIndex = cleanName.lastIndexOf('.');
@@ -36,16 +38,48 @@ private:
         return cleanName;
     }
 
+    // Optimierte Zeichenfunktion (Anti-Flicker)
+    void drawUploadProgress(String filename, size_t current, size_t total) {
+        int percent = 0;
+        if (total > 0) {
+            percent = (int)((current * 100) / total);
+            if (percent > 100) percent = 100;
+        }
+
+        // TRICK: Nur zeichnen, wenn sich Prozent ändert! 
+        // Das verhindert das Flickern komplett.
+        if (percent == lastUploadPercent && current > 0) return; 
+        lastUploadPercent = percent;
+
+        display.clear();
+        display.setTextColor(display.color565(0, 200, 255)); // Cyan
+        display.printCentered("FILE UPLOAD", 15);
+        
+        // Dateiname gekürzt anzeigen
+        String shortName = filename;
+        if (shortName.length() > 16) shortName = "..." + shortName.substring(shortName.length()-13);
+        
+        display.setTextColor(display.color565(150, 150, 150));
+        display.printCentered(shortName, 55);
+
+        // Balken zeichnen
+        if (total > 0) {
+            int w = map(percent, 0, 100, 0, 100);
+            display.drawRect(14, 30, 102, 12, display.color565(80, 80, 80)); // Rahmen
+            display.fillRect(15, 31, w, 10, display.color565(0, 200, 255)); // Füllung
+        }
+        
+        display.show();
+    }
+
 public:
     WebManager() : server(80) {}
 
     void begin() {
-        // 1. Root Page (STREAMING MODE)
-        // WICHTIG: Wir behalten das Streaming bei, sonst stürzt der ESP 
-        // bei vielen Dateien wegen RAM-Mangel ab.
+        // 1. Root Page
         server.on("/", HTTP_GET, [this]() {
             server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-            server.send(200, "text/html", ""); // Leerer Body startet Chunked-Transfer
+            server.send(200, "text/html", ""); 
             
             String chunk = "<html><head><title>Matrix OS</title></head><body>";
             chunk += "<h1>Matrix OS Storage</h1>";
@@ -62,11 +96,8 @@ public:
             chunk += "</form><hr>";
 
             chunk += "<table border='1'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
-            
-            // Header-Block senden
             server.sendContent(chunk);
 
-            // Datei-Liste Zeile für Zeile streamen
             File root = LittleFS.open("/");
             File file = root.openNextFile();
             while(file){
@@ -74,27 +105,35 @@ public:
                     String line = "<tr><td><a href='" + String(file.name()) + "'>" + String(file.name()) + "</a></td>";
                     line += "<td>" + String(file.size()) + " B</td>";
                     line += "<td><a href='/delete?name=" + String(file.name()) + "'>Delete</a></td></tr>";
-                    server.sendContent(line); // Zeile sofort raussschicken
+                    server.sendContent(line); 
                 }
                 file = root.openNextFile();
             }
             
             server.sendContent("</table></body></html>");
-            server.sendContent(""); // Stream beenden
+            server.sendContent(""); 
         });
 
         // 2. Format Handler
         server.on("/format", HTTP_POST, [this]() {
-            forceOverlay("Formatting...", 10, "warn");
+            display.clear();
+            display.setTextColor(display.color565(255, 0, 0));
+            display.printCentered("FORMATTING...", 32);
+            display.show();
+            
             delay(100); 
             LittleFS.format();
+            
             server.send(200, "text/html", "Formatiert! <a href='/'>Zurueck</a>");
+            forceOverlay("Format Done", 3, "success");
         });
 
-        // 3. Upload Handler (STABILIZED, NO DIMMING)
+        // 3. Upload Handler (Stabilisiert)
         server.on("/upload", HTTP_POST, [this]() {
             server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
-            forceOverlay("Upload Done", 3, "success"); 
+            
+            // Overlay wird erst angezeigt, wenn der Loop wieder läuft
+            forceOverlay("Upload Complete", 4, "success"); 
             Serial.println("Web: Upload finished.");
             
         }, [this]() { 
@@ -106,14 +145,23 @@ public:
                 Serial.print("Web: Upload Start: "); Serial.println(filename);
                 
                 uploadFile = LittleFS.open(filename, "w");
-                forceOverlay("Uploading...", 60, "warn"); 
+                
+                // Reset Zähler
+                uploadBytesWritten = 0; 
+                lastUploadPercent = -1;
+                
+                display.setBrightness(150);
+                drawUploadProgress(filename, 0, 100);
             } 
             else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (uploadFile) {
                     uploadFile.write(upload.buf, upload.currentSize);
                     
-                    // delay(1) ist essentiell für WiFi-Stabilität beim Upload,
-                    // auch bei gutem Netzteil!
+                    // Manuell zählen statt upload.index nutzen (das fehlte in der Lib)
+                    uploadBytesWritten += upload.currentSize; 
+                    
+                    drawUploadProgress(upload.filename, uploadBytesWritten, upload.totalSize);
+                    
                     delay(1); 
                 }
             } 
@@ -126,9 +174,13 @@ public:
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
                 if (uploadFile) {
                     uploadFile.close();
-                    Serial.println("Web: Upload Aborted");
                     LittleFS.remove("/" + upload.filename); 
                 }
+                display.clear();
+                display.setTextColor(display.color565(255, 0, 0));
+                display.printCentered("UPLOAD FAILED", 32);
+                display.show();
+                delay(2000);
             }
         });
 
