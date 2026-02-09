@@ -31,7 +31,6 @@ private:
     unsigned long lastMqttRetry = 0;
     unsigned long lastTimeCheck = 0;
 
-    // ... (handleMqttMessage & CallbackTrampoline bleiben unverändert) ...
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
         DynamicJsonDocument doc(2560); 
@@ -131,14 +130,11 @@ public:
         }
     }
 
-    // --- HIER IST DER FIX FÜR OTA ---
     void setupOTA() {
         ArduinoOTA.setHostname("Wortuhr-Matrix-OS");
         ArduinoOTA.setPassword(ota_password);
 
-        // 1. START: Statische Meldung + Screen Clear
         ArduinoOTA.onStart([this]() { 
-            // WICHTIG: Da wir im Single Core sind, dürfen wir hier direkt zeichnen!
             displayRef.setBrightness(150); // Sicherstellen dass man was sieht
             displayRef.setFade(1.0);
             displayRef.clear();
@@ -204,7 +200,6 @@ public:
         ArduinoOTA.begin();
     }
     
-    // ... (Rest bleibt gleich) ...
     void checkTimeSync() {
         if (!timeInitialized || timeSynced) return; 
         struct tm ti;
@@ -216,7 +211,7 @@ public:
     }
 
     void loop() {
-        if (otaInitialized) ArduinoOTA.handle(); // Hierin passiert jetzt das Zeichnen!
+        if (otaInitialized) ArduinoOTA.handle();
 
         unsigned long now = millis();
         if (WiFi.status() != WL_CONNECTED) {

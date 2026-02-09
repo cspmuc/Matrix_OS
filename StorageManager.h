@@ -9,14 +9,10 @@ public:
     bool begin() {
         Serial.println("Storage: Mounting LittleFS...");
         
-        // SICHERHEIT: 3 Versuche das Dateisystem zu mounten
-        // Hilft bei "Power Glitches" oder Timing-Problemen beim Kaltstart
         for (int i = 0; i < 3; i++) {
             if (LittleFS.begin(false)) {
                 Serial.println("Storage: Mounted successfully.");
                 status("FS Mounted", display.color565(0, 255, 0));
-                
-                // Optional: Speicherbelegung anzeigen (Debug)
                 listDir("/");
                 return true;
             }
@@ -50,7 +46,6 @@ public:
     }
 
     void listDir(const char * dirname){
-        // (Code bleibt gleich wie vorher)
         Serial.printf("Listing directory: %s\n", dirname);
         File root = LittleFS.open(dirname);
         if(!root) return;

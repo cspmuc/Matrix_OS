@@ -4,8 +4,6 @@
 #include <map>
 #include <vector>
 
-// CLEANUP: Kein Mutex mehr nötig
-
 struct SensorItem {
     String icon;  
     String text;  
@@ -33,7 +31,6 @@ public:
         currentPageIt = pages.begin();
     }
 
-    // CLEANUP: Mutex Lock entfernt
     void updatePage(String id, String title, int ttl, const std::vector<SensorItem>& newItems) {
         SensorPage& p = pages[id];
         

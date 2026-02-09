@@ -33,12 +33,7 @@ WebManager webServer;
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
 bool isBooting = true;
-// CLEANUP: Diese Variablen werden hier nicht mehr gebraucht,
-// da NetworkManager das Zeichnen intern regelt.
-// volatile bool otaActive = false; 
-// volatile int otaProgress = 0;
 
-// ... (BootLogEntry, Overlay Structs etc. bleiben gleich) ...
 struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
@@ -59,8 +54,6 @@ const int frameDelay = 16;
 float fadeVal = 1.0;
 const float fadeStep = 0.05; 
 AppMode displayedApp = WORDCLOCK;
-
-// ... (Hilfsfunktionen queueOverlay, forceOverlay, status, processAndDrawOverlay bleiben gleich) ...
 
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
     if (overlayQueue.size() < 5) {
@@ -142,7 +135,6 @@ void processAndDrawOverlay(DisplayManager& display) {
     }
 }
 
-// --- SETUP ---
 void setup() {
   Serial.begin(115200);
   delay(1000); 
@@ -195,16 +187,12 @@ void setup() {
   isBooting = false;
 }
 
-// --- MAIN LOOP ---
 void loop() {
     unsigned long now = millis();
 
-    // A. NETZWERK & LOGIK
-    // Wenn hier ein OTA Update läuft, zeichnet 'network.loop' jetzt selbständig!
     network.loop();
     webServer.handle(); 
 
-    // B. DISPLAY UPDATE (Normalbetrieb)
     static unsigned long lastFrameTime = 0;
     if (now - lastFrameTime >= frameDelay) {
         lastFrameTime = now;
@@ -227,11 +215,7 @@ void loop() {
         display.setFade(fadeVal);
 
         display.clear();
-
-        // CLEANUP: Der alte OTA-Zeichen-Block ist hier komplett weg.
-        // Das Display wird nun nur noch von Apps gesteuert, wenn KEIN Update läuft.
-        // (Während des Updates blockiert network.loop() eh die Ausführung bis hierher).
-        
+       
         if (brightness > 0) {
              switch(displayedApp) {
                case WORDCLOCK:   appWordClock.draw(display);   break;

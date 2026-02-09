@@ -9,12 +9,9 @@ private:
     RichText richText;
     const char* stundenNamen[13] = {"zwölf", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf"};
     
-    // Speicher für die letzte gültige Zeit (gegen Flackern)
     struct tm lastKnownTime;
     bool hasValidTime = false;
 
-    // NEU: Timer für Performance-Optimierung
-    // Wir fragen die Systemzeit nur alle 200ms ab, statt 60x pro Sekunde.
     unsigned long lastTimeCheck = 0;
     const unsigned long TIME_CHECK_INTERVAL = 200; 
 
@@ -22,42 +19,33 @@ public:
     void draw(DisplayManager& display) override {
         unsigned long now = millis();
 
-        // 1. PERFORMANCE BREMSE:
-        // Nur alle 200ms die echte Systemzeit holen.
-        // Das entlastet Core 0/1 Synchronisation massiv.
         if (now - lastTimeCheck > TIME_CHECK_INTERVAL) {
             lastTimeCheck = now;
             
             struct tm ti;
-            // Timeout 0 ist wichtig, damit wir nicht blockieren
             if(getLocalTime(&ti, 0)) {
                 lastKnownTime = ti;
                 hasValidTime = true;
             } 
         }
         
-        // CHECK: Haben wir überhaupt eine Zeit?
         if (!hasValidTime) {
-            // Nur wenn wir noch NIE eine Zeit hatten, zeigen wir den Fehler
             richText.drawCentered(display, 36, "{c:red}NTP not synced", "Small");
             return;
         }
 
-        // Ab hier nutzen wir die gespeicherte Zeit (stabilisiert)
         int h = lastKnownTime.tm_hour;
         int m = lastKnownTime.tm_min;
         int mR = (m / 5) * 5; 
         int s = h % 12;
         int nextS = (s + 1) % 12;
 
-        // --- EDLE ECKEN (Minuten) ---
         uint16_t dotCol = COL_GOLD; 
         if (m % 5 >= 1) display.drawPixel(0, 0, dotCol);
         if (m % 5 >= 2) display.drawPixel(M_WIDTH - 1, 0, dotCol);
         if (m % 5 >= 3) display.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, dotCol);
         if (m % 5 >= 4) display.drawPixel(0, M_HEIGHT - 1, dotCol);
 
-        // --- TEXT LOGIK ---
         String cDim = "{c:silver}"; 
         String cHigh = "{c:gold}";  
         

@@ -4,19 +4,20 @@
 #include <FS.h>
 #include <LittleFS.h>
 
-// --- WLAN & MQTT ---
-const char* ssid     = "FBSTA";
+const char* ssid     = CONFIG_WIFISSID;
 const char* password = SECRET_PASS;
-const char* mqtt_server   = "192.168.137.9";
-const int   mqtt_port     = 1883;
-const char* mqtt_user     = "mqttusr";
+
+const char* mqtt_server   = CONFIG_MQTTSERVER;
+const int   mqtt_port     = CONFIG_MQTTPORT;
+const char* mqtt_user     = SECRET_MQTTUSER;
 const char* mqtt_pass     = SECRET_MQTTPASS;
+
 const char* ota_password  = SECRET_OTAPASS;
 
 // --- ZEIT ---
-const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 3600;
-const int   daylightOffset_sec = 3600;
+const char* ntpServer = CONFIG_NTPSERVER;
+const long  gmtOffset_sec = CONFIG_GMTOFFSETSEC;
+const int   daylightOffset_sec = CONFIG_DAYLIGHTOFFSET;
 
 // --- DISPLAY ---
 #define M_WIDTH  128   
@@ -42,6 +43,5 @@ const int   daylightOffset_sec = 3600;
 // App Definitionen
 enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, OFF };
 
-// CLEANUP: Keine Atomics mehr nötig
 extern AppMode currentApp;
 extern int brightness;
