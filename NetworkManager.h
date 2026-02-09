@@ -7,7 +7,6 @@
 #include "DisplayManager.h"
 #include "SensorApp.h" 
 
-// Externe Funktionen
 extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
 extern volatile bool otaActive;
@@ -18,8 +17,9 @@ private:
     WiFiClient espClient;
     PubSubClient client;
     
-    std::atomic<AppMode>& currentAppRef;
-    std::atomic<int>& brightnessRef;
+    // CLEANUP: Keine Atomic Referenzen mehr
+    AppMode& currentAppRef;
+    int& brightnessRef;
     
     DisplayManager& displayRef;
     SensorApp& sensorAppRef; 
@@ -36,14 +36,12 @@ private:
     unsigned long lastTimeCheck = 0;
 
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
+        // (Logik bleibt gleich, aber Zugriff auf Refs ist einfacher)
         String t = String(topic);
-        
-        // JSON Puffer
-        DynamicJsonDocument doc(2560); // Ruhig etwas mehr Reserve geben
+        DynamicJsonDocument doc(2560); 
         DeserializationError error = deserializeJson(doc, payload, length);
         
         if (error) {
-             // Fallback für einfache Strings (Power CMD)
              String msg = "";
              for (int i = 0; i < length; i++) msg += (char)payload[i];
              if (t == "matrix/cmd/power") {
@@ -54,13 +52,11 @@ private:
              return;
         }
 
-        // Helligkeit
         if (t == "matrix/cmd/brightness" && doc.containsKey("val")) {
             brightnessRef = doc["val"].as<int>();
             publishState();
         }
         
-        // App Switch
         if (t == "matrix/cmd/app" && doc.containsKey("app")) {
             String newApp = doc["app"];
             if (newApp == "wordclock") currentAppRef = WORDCLOCK;
@@ -72,28 +68,21 @@ private:
             publishState(); 
         }     
 
-        // Overlay / Notification
         if (t == "matrix/cmd/overlay") {
              String msg = doc["msg"] | "";
              int dur = doc["duration"] | 5;    
              String col = doc["color"] | "white";
              int speed = doc["speed"] | 30; 
-             
-             if (msg.length() > 0) {
-                 queueOverlay(msg, dur, col, speed);
-             }
+             if (msg.length() > 0) queueOverlay(msg, dur, col, speed);
         }
 
-        // --- SENSOR PAGE UPDATE ---
         if (t == "matrix/cmd/sensor_page") {
+            // (Sensor Code bleibt gleich)
             String id = doc["id"] | "default";
             String title = doc["title"] | "INFO";
             int ttl = doc["ttl"] | 60; 
-            
             std::vector<SensorItem> items;
-            
             JsonArray jsonItems = doc["items"].as<JsonArray>();
-            
             for (JsonObject item : jsonItems) {
                 SensorItem si;
                 si.icon = item["icon"] | "";
@@ -101,10 +90,7 @@ private:
                 si.color = item["color"] | "white";
                 items.push_back(si);
             }
-            
-            if (!items.empty()) {
-                sensorAppRef.updatePage(id, title, ttl, items);
-            }
+            if (!items.empty()) sensorAppRef.updatePage(id, title, ttl, items);
         }
     }
 
@@ -113,7 +99,8 @@ private:
     }
 
 public:
-    MatrixNetworkManager(std::atomic<AppMode>& app, std::atomic<int>& bright, DisplayManager& disp, SensorApp& sensors) 
+    // CLEANUP: Konstruktor Signatur angepasst (kein std::atomic)
+    MatrixNetworkManager(AppMode& app, int& bright, DisplayManager& disp, SensorApp& sensors) 
         : client(espClient), currentAppRef(app), brightnessRef(bright), displayRef(disp), sensorAppRef(sensors) {
         instance = this;
     }
@@ -125,13 +112,10 @@ public:
     bool begin() {
         WiFi.setSleep(false);
         if (WiFi.status() == WL_CONNECTED) return true;
-        
         if (WiFi.status() != WL_CONNECTED) {
              WiFi.mode(WIFI_STA);
              WiFi.begin(ssid, password);
-             //delay(1000);
         }
-
         if (WiFi.status() == WL_CONNECTED) {
             tryInitServices(); 
             return true;
@@ -146,19 +130,14 @@ public:
             setupOTA();
             otaInitialized = true;
         }
-        
         if (!timeInitialized) {
             configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
             timeInitialized = true; 
         }
-        
         if (!mqttInitialized) { 
             client.setServer(mqtt_server, mqtt_port);
             client.setCallback(mqttCallbackTrampoline);
-            
-            // --- WICHTIGER FIX: BUFFER ERHÖHEN ---
-            client.setBufferSize(2048); // Standard ist oft nur 256
-            
+            client.setBufferSize(2048); 
             mqttInitialized = true;
         }
     }
@@ -177,17 +156,10 @@ public:
     
     void checkTimeSync() {
         if (!timeInitialized || timeSynced) return; 
-        
         struct tm ti;
-        // Auch hier: Timeout 0, damit der NetworkTask nicht blockiert
         if (getLocalTime(&ti, 0)) {
             timeSynced = true;
-            
-            // NEU: Erfolgsmeldung auf dem Display!
-            // Wir nutzen queueOverlay (das ist thread-safe dank Mutex in Matrix_OS.ino)
-            // "Time Synced" in Grün, 3 Sekunden lang.
             queueOverlay("Time Synced", 3, "success", 0); 
-            
             Serial.println("Network: NTP Time Synchronized successfully.");
         }
     }
@@ -196,7 +168,6 @@ public:
         if (otaInitialized) ArduinoOTA.handle();
 
         unsigned long now = millis();
-
         if (WiFi.status() != WL_CONNECTED) {
             if (now - lastWifiCheck > 10000) { 
                 lastWifiCheck = now;
@@ -232,9 +203,11 @@ public:
         if (!client.connected()) return;
         if (brightnessRef > 0) client.publish("matrix/status", "ON", true);
         else client.publish("matrix/status", "OFF", true);
-        client.publish("matrix/status/brightness", String(brightnessRef.load()).c_str(), true);
+        
+        // CLEANUP: .load() entfernt
+        client.publish("matrix/status/brightness", String(brightnessRef).c_str(), true);
         String appStr;
-        switch(currentAppRef.load()) {
+        switch(currentAppRef) { // CLEANUP: .load() entfernt
             case WORDCLOCK:   appStr = "wordclock"; break;
             case SENSORS:     appStr = "sensors"; break;
             case TESTPATTERN: appStr = "testpattern"; break;

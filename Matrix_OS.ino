@@ -2,8 +2,7 @@
 #include <math.h>
 #include <vector>
 #include <deque>
-#include <atomic> 
-#include "config.h"
+#include "config.h" // CLEANUP: Kein <atomic> mehr nötig
 
 // Includes
 #include "DisplayManager.h"
@@ -17,9 +16,9 @@
 #include "StorageManager.h" 
 #include "WebManager.h"     
 
-// Globale Steuerung
-std::atomic<AppMode> currentApp(WORDCLOCK);
-std::atomic<int> brightness(150); 
+// CLEANUP: Globale Variablen (Standard Typen)
+AppMode currentApp = WORDCLOCK;
+int brightness = 150; 
 
 // Objekte
 DisplayManager display;
@@ -35,9 +34,9 @@ WebManager webServer;
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors);
 
-// WICHTIG: Dummies, damit SensorApp.h & Co nicht abstürzen
-SemaphoreHandle_t appDataMutex; 
-SemaphoreHandle_t overlayMutex; 
+// CLEANUP: Mutexe gelöscht
+// SemaphoreHandle_t appDataMutex; 
+// SemaphoreHandle_t overlayMutex; 
 
 // Status Variablen
 bool isBooting = true;
@@ -64,10 +63,10 @@ OverlayMessage currentOverlay;
 
 const int frameDelay = 16; // ~60 FPS
 float fadeVal = 1.0;
-const float fadeStep = 0.05; // Etwas schnellerer Fade im Single Core
+const float fadeStep = 0.05; 
 AppMode displayedApp = WORDCLOCK;
 
-// --- HILFSFUNKTIONEN ---
+// --- HILFSFUNKTIONEN (Clean, kein Mutex) ---
 
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
     if (overlayQueue.size() < 5) {
@@ -89,7 +88,7 @@ void status(const String& msg, uint16_t color = 0xFFFF) {
       bootLogs.push_back({String(buf), color});
       if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
       
-      // SOFORTIGES ZEICHNEN (wichtig beim Boot im Single Core)
+      // Sofortiges Zeichnen im Boot-Modus für Feedback
       display.clear();
       display.setFade(1.0);
       display.setTextSize(1);
@@ -163,14 +162,12 @@ void processAndDrawOverlay(DisplayManager& display) {
     }
 }
 
-// --- SETUP (Alles hintereinander weg) ---
+// --- SETUP (Linearer Ablauf) ---
 void setup() {
   Serial.begin(115200);
   delay(1000); 
 
-  // Mutexe erstellen (nur damit die externen Referenzen gültig sind)
-  overlayMutex = xSemaphoreCreateMutex();
-  appDataMutex = xSemaphoreCreateMutex();
+  // CLEANUP: Keine Mutex Initialisierung mehr nötig
   
   if (!display.begin()) {
     while(1);
@@ -186,10 +183,8 @@ void setup() {
 
   // 2. WiFi Connect
   status("Connect WiFi...", display.color565(255, 255, 255));
-  network.begin(); // Startet WiFi
+  network.begin(); 
   
-  // Hier warten wir im Setup, bis WiFi da ist.
-  // Das ist sicher, weil hier noch keine anderen Tasks stören.
   int retryCounter = 0;
   while(!network.isConnected()) {
       delay(500);
@@ -218,23 +213,23 @@ void setup() {
   
   int ntpRetryCount = 0;
   while(!network.isTimeSynced()) {
-      network.loop(); // NTP Pakete verarbeiten
+      network.loop(); 
       delay(50);
-      if(ntpRetryCount++ > 100) break; // Timeout nach 5s, weiter gehts
+      if(ntpRetryCount++ > 100) break; 
   }
 
   status("System Ready", display.color565(0, 255, 0));
   delay(1000);
   isBooting = false;
+  
+  // CLEANUP: Keine Tasks mehr starten! Die loop() übernimmt alles.
 }
 
-// --- MAIN LOOP (Das Herzstück) ---
+// --- MAIN LOOP ---
 void loop() {
     unsigned long now = millis();
 
-    // A. NETZWERK & LOGIK (Immer zuerst)
-    // Hier werden Uploads verarbeitet. Wenn ein Upload dauert,
-    // bleibt der Loop hier kurz hängen. Das Display wartet.
+    // A. NETZWERK & LOGIK
     network.loop();
     webServer.handle(); 
 
@@ -244,10 +239,9 @@ void loop() {
         lastFrameTime = now;
 
         // 1. Helligkeit & Fade
-        int currentBright = brightness.load();
-        display.setBrightness(currentBright);
+        display.setBrightness(brightness); // CLEANUP: Kein .load()
         
-        AppMode targetApp = currentApp.load();
+        AppMode targetApp = currentApp; // CLEANUP: Kein .load()
         if (displayedApp != targetApp) {
             fadeVal -= fadeStep;
             if (fadeVal <= 0.0) {
@@ -277,7 +271,7 @@ void loop() {
         }
         // 3. Normale Apps
         else {
-             if (currentBright > 0) {
+             if (brightness > 0) {
                  switch(displayedApp) {
                    case WORDCLOCK:   appWordClock.draw(display);   break;
                    case SENSORS:     appSensors.draw(display);     break;
@@ -289,7 +283,6 @@ void loop() {
                  processAndDrawOverlay(display);
              }
         }
-        
         display.show();
     }
 }
