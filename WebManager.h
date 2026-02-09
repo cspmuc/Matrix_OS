@@ -14,8 +14,6 @@ private:
     
     size_t uploadBytesWritten = 0;
     unsigned long lastDrawTime = 0;
-    
-    // NEU: Fehler-Flag
     bool uploadError = false;
 
     String sanitizeFilename(String filename) {
@@ -41,6 +39,7 @@ private:
     }
 
     void drawUploadStats(String filename, size_t current, bool isError = false) {
+        // Performance: Nur alle 100ms zeichnen (außer bei Fehler)
         if (!isError && (millis() - lastDrawTime < 100)) return;
         lastDrawTime = millis();
 
@@ -50,7 +49,7 @@ private:
             display.setTextColor(display.color565(255, 0, 0)); // Rot
             display.printCentered("ERROR", 15);
             display.setTextColor(display.color565(255, 255, 255));
-            display.printCentered("Disk Full!", 35);
+            display.printCentered("Write Failed!", 35);
         } else {
             display.setTextColor(display.color565(0, 200, 255)); // Cyan
             display.printCentered("UPLOADING", 15);
@@ -66,7 +65,6 @@ private:
             else sizeStr = String(current / 1024) + " KB";
             display.printCentered(sizeStr, 55);
         }
-        
         display.show();
     }
 
@@ -107,7 +105,6 @@ public:
                 }
                 file = root.openNextFile();
             }
-            
             server.sendContent("</table></body></html>");
             server.sendContent(""); 
         });
@@ -118,48 +115,34 @@ public:
             display.setTextColor(display.color565(255, 0, 0));
             display.printCentered("FORMATTING...", 32);
             display.show();
-            
             delay(100); 
             LittleFS.format();
-            
             server.send(200, "text/html", "Formatiert! <a href='/'>Zurueck</a>");
             forceOverlay("Format OK", 3, "success");
         });
 
-        // 3. Upload Handler (MIT SICHERHEITS-CHECK)
+        // 3. Upload Handler
         server.on("/upload", HTTP_POST, [this]() {
-            // HIER entscheidet sich, was der Browser sieht
             if (uploadError) {
-                // Fehler senden
-                server.send(507, "text/plain", "Error: Disk Full or Write Failed");
-                // Overlay wurde bereits im Loop auf "Disk Full" gesetzt
-                Serial.println("Web: Upload FAILED.");
+                server.send(507, "text/plain", "Error: Write Failed (Disk Full?)");
             } else {
-                // Alles gut
                 server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
                 forceOverlay("Upload OK", 3, "success"); 
-                Serial.println("Web: Upload finished successfully.");
             }
-            
         }, [this]() { 
             HTTPUpload& upload = server.upload();
             esp_task_wdt_reset();
 
             if (upload.status == UPLOAD_FILE_START) {
-                uploadError = false; // Reset Fehlerstatus
+                uploadError = false; 
                 String filename = sanitizeFilename(upload.filename);
-                
-                // CHECK 1: Passt die Datei überhaupt drauf?
-                size_t freeSpace = LittleFS.totalBytes() - LittleFS.usedBytes();
-                if (upload.totalSize > freeSpace) {
-                    Serial.println("Web: File too big for Flash!");
-                    uploadError = true;
-                    forceOverlay("Disk Full", 5, "warn");
-                    return; // Nicht öffnen
-                }
-
                 Serial.print("Web: Upload Start: "); Serial.println(filename);
+                
                 uploadFile = LittleFS.open(filename, "w");
+                if (!uploadFile) {
+                    uploadError = true;
+                    return;
+                }
                 
                 uploadBytesWritten = 0; 
                 lastDrawTime = 0; 
@@ -167,23 +150,18 @@ public:
                 drawUploadStats(filename, 0);
             } 
             else if (upload.status == UPLOAD_FILE_WRITE) {
-                // Wenn schon ein Fehler vorliegt, ignorieren wir den Rest der Daten
-                if (uploadError) return;
+                if (uploadError) return; // Wenn Fehler, verwerfen wir den Rest
 
                 if (uploadFile) {
-                    // CHECK 2: Schreiben versuchen und Ergebnis prüfen
                     size_t bytesWritten = uploadFile.write(upload.buf, upload.currentSize);
                     
+                    // WRITE CHECK: Hat das Schreiben geklappt?
                     if (bytesWritten < upload.currentSize) {
-                        // Oha, Flash ist voll gelaufen!
-                        Serial.println("Web: Write failed (Disk Full?)");
+                        Serial.println("Web: Write failed - Disk likely Full");
                         uploadError = true;
                         uploadFile.close();
-                        
-                        // Kaputte Datei löschen
-                        LittleFS.remove("/" + sanitizeFilename(upload.filename));
-                        
-                        drawUploadStats("ERROR", 0, true); // Zeige Fehler am Display
+                        LittleFS.remove("/" + sanitizeFilename(upload.filename)); // Kaputte Datei löschen
+                        drawUploadStats("ERROR", 0, true);
                         return;
                     }
 
@@ -196,8 +174,7 @@ public:
                 if (uploadFile) {
                     uploadFile.close();
                     if (!uploadError) {
-                        Serial.print("Upload Size: "); Serial.println(uploadBytesWritten);
-                        // Final Draw
+                        Serial.print("Web: Upload Size: "); Serial.println(uploadBytesWritten);
                         lastDrawTime = 0; 
                         drawUploadStats(upload.filename, uploadBytesWritten);
                     }
