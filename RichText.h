@@ -46,7 +46,7 @@ struct FontPair {
     const uint8_t* bold;
     int8_t iconOffsetY;  
     uint8_t lineHeight;
-    uint8_t baselineOffset; // Dient uns als Versalhöhe (Cap Height)
+    uint8_t baselineOffset; 
 };
 
 struct RenderState {
@@ -185,12 +185,25 @@ private:
             return ""; 
         }
 
+        // Explizites Bitmap Icon: {icon:smile}
         if (tag.startsWith("icon:")) {
             isBitmapIcon = true;
             bitmapName = tag.substring(5);
             return "";
         }
+        
+        // NEU: Automatische Erkennung numerischer IDs (LaMetric)
+        // Check: Ist es eine Zahl? z.B. {2356}
+        bool isNumeric = true;
+        for(unsigned int i=0; i<tag.length(); i++) if(!isDigit(tag[i])) isNumeric = false;
+        
+        if (isNumeric && tag.length() > 0) {
+            isBitmapIcon = true;
+            bitmapName = tag; // ID wird als Name genutzt (IconManager lädt es)
+            return "";
+        }
 
+        // Sonst: Font Icon
         isIcon = true;
         return getIconCode(tag);
     }
@@ -199,20 +212,22 @@ private:
         d.setTextColor(state.color);
         
         if (isBitmapIcon) {
-            // --- NEU: Dynamische Zentrierung ---
+            // --- NEU: Dynamische Zentrierung & Scaling ---
             int iconW = iconManager.getIconWidth(bitmapName);
             int iconH = iconManager.getIconHeight(bitmapName);
             
-            // Berechnung:
-            // 1. fonts.baselineOffset ist die Höhe eines Großbuchstabens über der Baseline (z.B. 13px)
-            // 2. Wir wollen die Mitte des Icons auf die Mitte des Buchstabens legen.
-            // 3. Mitte Buchstabe = y - (baselineOffset / 2)
-            // 4. Oberkante Icon = Mitte Buchstabe - (iconH / 2)
+            // Wenn 8x8 -> Wir tun so, als wäre es 16x16 für das Layout (Upscaling)
+            bool upscale = (iconW == 8 && iconH == 8);
+            int displayW = upscale ? 16 : iconW;
+            int displayH = upscale ? 16 : iconH;
             
-            int yCentered = y - (fonts.baselineOffset / 2) - (iconH / 2);
+            // Zentrierung: Baseline - Halbe Höhe des Icons
+            int yCentered = y - (fonts.baselineOffset / 2) - (displayH / 2);
             
-            iconManager.drawIcon(d, x, yCentered, bitmapName);
-            return iconW + 1; // Dynamische Breite + 1px Padding
+            // Zeichnen (mit true für Upscale Request)
+            iconManager.drawIcon(d, x, yCentered, bitmapName, true);
+            
+            return displayW + 1; // Breite + Padding
         }
         else if (isIcon) {
             d.setU8g2Font(iconFont);
@@ -229,8 +244,11 @@ private:
 
     int measurePart(DisplayManager& d, String text, bool isIcon, bool isBitmapIcon, String bitmapName, FontPair fonts, bool bold) {
         if (isBitmapIcon) {
-            // --- NEU: Dynamische Breite abfragen ---
-            return iconManager.getIconWidth(bitmapName) + 1;
+            int iconW = iconManager.getIconWidth(bitmapName);
+            int iconH = iconManager.getIconHeight(bitmapName);
+            // Auch beim Messen: Wenn 8x8 -> Breite von 16 annehmen
+            bool upscale = (iconW == 8 && iconH == 8);
+            return (upscale ? 16 : iconW) + 1;
         }
         if (isIcon) {
             d.setU8g2Font(iconFont);
@@ -249,8 +267,8 @@ public:
         FontPair fonts = getFontByName(fontName);
         int totalW = 0;
         RenderState state = {COL_WHITE, false, false};
-        int len = text.length();
-        int i = 0;
+        unsigned int len = text.length();
+        unsigned int i = 0;
         while(i < len) {
             if(text[i] == '{') {
                 int end = text.indexOf('}', i);
@@ -287,8 +305,8 @@ public:
         FontPair fonts = getFontByName(fontName);
         RenderState state = {defaultColor, false, false};
         int cursorX = x;
-        int len = text.length();
-        int i = 0;
+        unsigned int len = text.length();
+        unsigned int i = 0;
         while(i < len) {
             if(text[i] == '{') {
                 int end = text.indexOf('}', i);
@@ -320,8 +338,8 @@ public:
         int startX = x;
         int cursorX = x;
         int cursorY = y;
-        int len = text.length();
-        int i = 0;
+        unsigned int len = text.length();
+        unsigned int i = 0;
         while(i < len) {
             if(text[i] == '{') {
                 int end = text.indexOf('}', i);
@@ -343,9 +361,9 @@ public:
             } else {
                 int nextTag = text.indexOf('{', i);
                 int nextSpace = text.indexOf(' ', i);
-                int endOfWord = len;
-                if (nextTag != -1 && nextTag < endOfWord) endOfWord = nextTag;
-                if (nextSpace != -1 && nextSpace < endOfWord) endOfWord = nextSpace;
+                unsigned int endOfWord = len;
+                if (nextTag != -1 && (unsigned int)nextTag < endOfWord) endOfWord = nextTag;
+                if (nextSpace != -1 && (unsigned int)nextSpace < endOfWord) endOfWord = nextSpace;
                 bool isSpace = (endOfWord == nextSpace);
                 String word = text.substring(i, endOfWord);
                 
