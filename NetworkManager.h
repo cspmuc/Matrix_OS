@@ -6,9 +6,12 @@
 #include "config.h"
 #include "DisplayManager.h"
 #include "SensorApp.h" 
+#include <time.h> 
 
 extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
+// NEU: Damit wir forceOverlay (Urgent) aufrufen können
+extern void forceOverlay(String msg, int durationSec, String colorName);
 
 class MatrixNetworkManager {
 private:
@@ -33,24 +36,31 @@ private:
 
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
-        DynamicJsonDocument doc(2560); 
-        DeserializationError error = deserializeJson(doc, payload, length);
+        
+        // DANK PSRAM: Wir gönnen uns einen riesigen JSON Buffer auf dem Heap (8KB).
+        // Damit können auch komplexe Sensor-Pages oder lange Texte empfangen werden.
+        DynamicJsonDocument* doc = new DynamicJsonDocument(8192);
+        DeserializationError error = deserializeJson(*doc, payload, length);
+        
         if (error) {
              String msg = "";
              for (int i = 0; i < length; i++) msg += (char)payload[i];
+             // Fallback für einfache Text-Payloads (z.B. "ON"/"OFF" bei Power)
              if (t == "matrix/cmd/power") {
                 if (msg == "OFF") brightnessRef = 0;
                 else if (msg == "ON" && brightnessRef == 0) brightnessRef = 150;
                 publishState();
              }
+             delete doc;
              return;
         }
-        if (t == "matrix/cmd/brightness" && doc.containsKey("val")) {
-            brightnessRef = doc["val"].as<int>();
+        
+        if (t == "matrix/cmd/brightness" && doc->containsKey("val")) {
+            brightnessRef = (*doc)["val"].as<int>();
             publishState();
         }
-        if (t == "matrix/cmd/app" && doc.containsKey("app")) {
-            String newApp = doc["app"];
+        if (t == "matrix/cmd/app" && doc->containsKey("app")) {
+            String newApp = (*doc)["app"];
             if (newApp == "wordclock") currentAppRef = WORDCLOCK;
             else if (newApp == "sensors") currentAppRef = SENSORS;
             else if (newApp == "testpattern") currentAppRef = TESTPATTERN;
@@ -60,18 +70,32 @@ private:
             publishState(); 
         }     
         if (t == "matrix/cmd/overlay") {
-             String msg = doc["msg"] | "";
-             int dur = doc["duration"] | 5;    
-             String col = doc["color"] | "white";
-             int speed = doc["speed"] | 30; 
-             if (msg.length() > 0) queueOverlay(msg, dur, col, speed);
+             String msg = (*doc)["msg"] | "";
+             int dur = (*doc)["duration"] | 5;    
+             String col = (*doc)["color"] | "white";
+             int speed = (*doc)["speed"] | 30; 
+             // NEU: Prüfung auf 'urgent' Flag
+             bool urgent = (*doc)["urgent"] | false;
+             
+             // DEBUG: Zeigt im Serial Monitor an, was ankommt
+             Serial.print("MQTT Overlay: "); Serial.println(msg);
+             
+             if (msg.length() > 0) {
+                 if (urgent) {
+                     // Sofort anzeigen, Queue löschen
+                     forceOverlay(msg, dur, col);
+                 } else {
+                     // Normal einreihen
+                     queueOverlay(msg, dur, col, speed);
+                 }
+             }
         }
         if (t == "matrix/cmd/sensor_page") {
-            String id = doc["id"] | "default";
-            String title = doc["title"] | "INFO";
-            int ttl = doc["ttl"] | 60; 
+            String id = (*doc)["id"] | "default";
+            String title = (*doc)["title"] | "INFO";
+            int ttl = (*doc)["ttl"] | 60; 
             std::vector<SensorItem> items;
-            JsonArray jsonItems = doc["items"].as<JsonArray>();
+            JsonArray jsonItems = (*doc)["items"].as<JsonArray>();
             for (JsonObject item : jsonItems) {
                 SensorItem si;
                 si.icon = item["icon"] | "";
@@ -81,6 +105,7 @@ private:
             }
             if (!items.empty()) sensorAppRef.updatePage(id, title, ttl, items);
         }
+        delete doc;
     }
 
     static void mqttCallbackTrampoline(char* topic, byte* payload, unsigned int length) {
@@ -98,7 +123,10 @@ public:
     bool isTimeSynced() { return timeSynced; }
 
     bool begin() {
-        WiFi.setSleep(false);
+        // PERFORMANCE: WiFi Sleep deaktivieren!
+        // Verhindert Lags beim Webserver und Ping-Spikes.
+        WiFi.setSleep(false); 
+        
         if (WiFi.status() == WL_CONNECTED) return true;
         if (WiFi.status() != WL_CONNECTED) {
              WiFi.mode(WIFI_STA);
@@ -119,13 +147,21 @@ public:
             otaInitialized = true;
         }
         if (!timeInitialized) {
+            // Standard NTP Config
             configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
             timeInitialized = true; 
         }
         if (!mqttInitialized) { 
             client.setServer(mqtt_server, mqtt_port);
             client.setCallback(mqttCallbackTrampoline);
-            client.setBufferSize(2048); 
+            
+            // WICHTIG: Buffer massiv erhöht auf 16384 Bytes (16 KB)!
+            // Da dieser Block zu groß für den internen RAM ist, zwingt es den ESP32,
+            // ihn im PSRAM anzulegen. Das spart wertvollen internen Speicher.
+            client.setBufferSize(16384); 
+            
+            // KeepAlive auf 30s für schnellere Erkennung von Verbindungsabbrüchen
+            client.setKeepAlive(30); 
             mqttInitialized = true;
         }
     }
@@ -135,66 +171,43 @@ public:
         ArduinoOTA.setPassword(ota_password);
 
         ArduinoOTA.onStart([this]() { 
-            displayRef.setBrightness(150); // Sicherstellen dass man was sieht
             displayRef.setFade(1.0);
             displayRef.clear();
-            
-            displayRef.setTextColor(displayRef.color565(255, 255, 0)); // Gelb
-            displayRef.printCentered("SYSTEM UPDATE", 20);
-            displayRef.printCentered("BITTE WARTEN...", 40);
-            
-            displayRef.show(); // Zeigt das Bild sofort an
+            displayRef.setTextColor(displayRef.color565(255, 255, 0)); 
+            displayRef.printCentered("UPDATE", 32);
+            displayRef.show(); 
         });
 
-        // 2. ENDE: Erfolgsmeldung + Delay vor Reboot
         ArduinoOTA.onEnd([this]() { 
             displayRef.clear();
-            displayRef.setTextColor(displayRef.color565(0, 255, 0)); // Grün
-            displayRef.printCentered("UPDATE SUCCESS!", 32);
+            displayRef.setTextColor(displayRef.color565(0, 255, 0)); 
+            displayRef.printCentered("SUCCESS!", 32);
             displayRef.show();
-            
-            // Hier das gewünschte Delay, damit man es lesen kann
             delay(2000); 
         });
 
-        // 3. PROGRESS: Balken aktualisieren (Optional, aber schön)
-        // ArduinoOTA ruft das oft genug auf, dass es animiert wirkt.
         ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
             int p = (progress / (total / 100));
-            
-            // Nur alle 2% zeichnen, spart etwas Zeit, sieht aber flüssig aus
+            // Nur alle 2% zeichnen um Zeit zu sparen
             if (p % 2 == 0) {
                 displayRef.clear();
                 displayRef.setTextColor(displayRef.color565(255, 255, 0));
-                displayRef.printCentered("UPDATING...", 15);
-                
-                // Balken zeichnen
+                displayRef.printCentered("UPDATING...", 17);
                 int w = map(p, 0, 100, 0, 100);
-                displayRef.drawRect(14, 35, 102, 12, displayRef.color565(100, 100, 100)); // Rahmen
-                displayRef.fillRect(15, 36, w, 10, displayRef.color565(0, 255, 0));       // Füllung
-                
-                // Prozentzahl
+                displayRef.drawRect(14, 28, 102, 12, displayRef.color565(100, 100, 100)); 
+                displayRef.fillRect(15, 29, w, 10, displayRef.color565(0, 255, 0));       
                 String s = String(p) + "%";
-                displayRef.printCentered(s, 55);
-                
+                displayRef.printCentered(s, 57);
                 displayRef.show();
             }
         });
 
-        // 4. ERROR: Fehlermeldung
         ArduinoOTA.onError([this](ota_error_t error) { 
             displayRef.clear();
-            displayRef.setTextColor(displayRef.color565(255, 0, 0)); // Rot
-            displayRef.printCentered("UPDATE ERROR!", 25);
-            
-            if (error == OTA_AUTH_ERROR) displayRef.printCentered("Auth Failed", 45);
-            else if (error == OTA_BEGIN_ERROR) displayRef.printCentered("Begin Failed", 45);
-            else if (error == OTA_CONNECT_ERROR) displayRef.printCentered("Connect Failed", 45);
-            else if (error == OTA_RECEIVE_ERROR) displayRef.printCentered("Receive Failed", 45);
-            else if (error == OTA_END_ERROR) displayRef.printCentered("End Failed", 45);
-            
+            displayRef.setTextColor(displayRef.color565(255, 0, 0)); 
+            displayRef.printCentered("OTA ERROR!", 25);
             displayRef.show();
-            delay(3000); // Zeit zum Lesen lassen
+            delay(3000); 
         });
 
         ArduinoOTA.begin();
@@ -202,8 +215,11 @@ public:
     
     void checkTimeSync() {
         if (!timeInitialized || timeSynced) return; 
-        struct tm ti;
-        if (getLocalTime(&ti, 0)) {
+        
+        // Non-blocking Time Check
+        time_t now = time(nullptr);
+        // Epoch > 1.6 Mrd (ca. Jahr 2020) als Indikator für gültige Zeit
+        if (now > 1600000000) { 
             timeSynced = true;
             queueOverlay("Time Synced", 3, "success", 0); 
             Serial.println("Network: NTP Time Synchronized successfully.");
@@ -214,31 +230,57 @@ public:
         if (otaInitialized) ArduinoOTA.handle();
 
         unsigned long now = millis();
+        
+        // 1. WiFi Reconnect Logik
         if (WiFi.status() != WL_CONNECTED) {
             if (now - lastWifiCheck > 10000) { 
                 lastWifiCheck = now;
                 otaInitialized = false;
                 mqttInitialized = false; 
                 WiFi.disconnect();
-                WiFi.reconnect();
+                WiFi.begin(ssid, password); 
             }
             return; 
         }
 
         tryInitServices();
         
+        // 2. NTP Check (Non-Blocking, nur alle 1 Sekunde prüfen)
         if (!timeSynced && (now - lastTimeCheck > 1000)) {
             lastTimeCheck = now;
             checkTimeSync();
         }
 
+        // 3. MQTT Logic 
+        // Wir prüfen erst per TCP, ob der Server erreichbar ist, bevor wir
+        // in den blockierenden connect() laufen. Das verhindert Freezes.
         if (!client.connected()) {
             if (now - lastMqttRetry > 5000) { 
-                lastMqttRetry = now;
-                if (client.connect("MatrixPortalS3", mqtt_user, mqtt_pass, "matrix/status", 0, true, "OFF")) {
-                    client.subscribe("matrix/cmd/#");
-                    publishState();
+                
+                // TCP Pre-Check
+                bool serverReachable = false;
+                {
+                    WiFiClient testClient;
+                    // Kurzer Timeout (200ms)
+                    if (testClient.connect(mqtt_server, mqtt_port, 200)) {
+                        serverReachable = true;
+                        testClient.stop();
+                    }
                 }
+
+                if (serverReachable) {
+                    // Verbinden
+                    if (client.connect("MatrixPortalS3", mqtt_user, mqtt_pass, "matrix/status", 0, true, "OFF")) {
+                        client.subscribe("matrix/cmd/#");
+                        publishState();
+                        Serial.println("MQTT: Connected");
+                    }
+                } else {
+                    Serial.println("MQTT: Server not reachable (TCP Fail) - Skipping blocking connect");
+                }
+                
+                // Timer erst JETZT updaten -> Garantiert 5s Pause bis zum nächsten Versuch
+                lastMqttRetry = millis(); 
             }
         } else {
             client.loop();

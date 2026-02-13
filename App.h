@@ -4,5 +4,8 @@
 class App {
 public:
     virtual ~App() {}
-    virtual void draw(DisplayManager& display) = 0;
+    // Rückgabe true: Bild wurde aktualisiert -> Display.show() aufrufen
+    // Rückgabe false: Bild ist statisch -> Keine Änderung am Display nötig
+    // Parameter force: Erzwingt ein Neuzeichnen (z.B. wenn Overlay verschwindet)
+    virtual bool draw(DisplayManager& display, bool force) = 0;
 };

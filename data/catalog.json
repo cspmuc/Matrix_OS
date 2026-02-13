@@ -1,0 +1,19 @@
+{
+  "sheets": {
+    "dotto": { 
+      "file": "/dotto1.bmp", 
+      "cols": 16, 
+      "rows": 64 
+    }
+  },
+  "icons": {
+    "sun":     { "sheet": "dotto", "index": 0 },  
+    "cloud":   { "sheet": "dotto", "index": 1 },
+    "smile":   { "sheet": "dotto", "index": 2 },
+    "heart":   { "sheet": "dotto", "index": 3 },
+    "wifi":    { "sheet": "dotto", "index": 4 },
+    "arrow_u": { "sheet": "dotto", "index": 16 },
+    "arrow_d": { "sheet": "dotto", "index": 17 },
+    "unknown": { "sheet": "dotto", "index": 63 } 
+  }
+}

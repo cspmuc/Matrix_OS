@@ -1,11 +1,13 @@
 #pragma once
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <U8g2_for_Adafruit_GFX.h> 
+#include <Adafruit_GFX.h>
 #include "config.h"
 
 class DisplayManager {
 private:
     MatrixPanel_I2S_DMA* dma;
+    GFXcanvas16* canvas; // Soft Double Buffer im PSRAM
     U8G2_FOR_ADAFRUIT_GFX u8g2; 
 
     uint8_t gammaTable[256];
@@ -13,7 +15,7 @@ private:
     float fadeMultiplier;
 
 public:
-    DisplayManager() : dma(nullptr), baseBrightness(150), fadeMultiplier(1.0) {
+    DisplayManager() : dma(nullptr), canvas(nullptr), baseBrightness(150), fadeMultiplier(1.0) {
         // Gamma Tabelle berechnen
         const uint8_t minHardwareBright = 2; 
         const uint8_t maxHardwareBright = 255;
@@ -39,63 +41,68 @@ public:
         mxconfig.gpio.d = D_PIN; mxconfig.gpio.e = E_PIN;
         mxconfig.gpio.lat = LAT_PIN; mxconfig.gpio.oe = OE_PIN; mxconfig.gpio.clk = CLK_PIN;
         mxconfig.clkphase = false;
-        mxconfig.double_buff = true; 
+        
+        // SOFT DOUBLE BUFFERING: Wir nutzen unseren eigenen PSRAM Canvas
+        mxconfig.double_buff = false; 
 
         dma = new MatrixPanel_I2S_DMA(mxconfig);
         if (!dma->begin()) return false;
         
-        // U8g2 initialisieren
-        u8g2.begin(*dma);                 
-        u8g2.setFontMode(1);              
+        // PSRAM Canvas erstellen
+        canvas = new GFXcanvas16(M_WIDTH, M_HEIGHT);
+        if (!canvas) return false; 
         
+        // U8g2 auf den Canvas binden
+        u8g2.begin(*canvas);                 
+        u8g2.setFontMode(1); // Transparent Modus aktivieren
+        u8g2.setFontDirection(0);
+        
+        canvas->setTextWrap(false);
         dma->setTextWrap(false);
+        
         updateHardwareBrightness();
         return true;
     }
 
     // --- Font Support Methoden ---
-    void setU8g2Font(const uint8_t* font) {
-        u8g2.setFont(font);
-    }
+    void setU8g2Font(const uint8_t* font) { u8g2.setFont(font); }
 
     void drawString(int x, int y, String text, uint16_t color) {
+        u8g2.setFontMode(1); // WICHTIG: Transparenz erzwingen
         u8g2.setForegroundColor(color); 
-        u8g2.setCursor(x, y);
+        u8g2.setCursor(x, y); 
         u8g2.print(text);
     }
 
     void drawCenteredString(int y, String text, uint16_t color) {
+        u8g2.setFontMode(1); // Transparenz erzwingen
         u8g2.setForegroundColor(color);
         int w = u8g2.getUTF8Width(text.c_str());
         int x = (M_WIDTH - w) / 2;
-        u8g2.setCursor(x, y);
+        u8g2.setCursor(x, y); 
         u8g2.print(text);
     }
 
     void drawUnderlinedString(int y, String text, uint16_t color) {
+        u8g2.setFontMode(1); // Transparenz erzwingen
         u8g2.setForegroundColor(color);
         int w = u8g2.getUTF8Width(text.c_str());
         int x = (M_WIDTH - w) / 2; 
-        u8g2.setCursor(x, y);
+        u8g2.setCursor(x, y); 
         u8g2.print(text);
-        dma->drawFastHLine(x, y + 2, w, color);
+        if(canvas) canvas->drawFastHLine(x, y + 2, w, color);
     }
 
-    int getTextWidth(String text) {
-        return u8g2.getUTF8Width(text.c_str());
-    }
+    int getTextWidth(String text) { return u8g2.getUTF8Width(text.c_str()); }
 
-    // --- Grafik Wrapper & Effekte ---
+    // --- Grafik Wrapper ---
     void setFade(float f) {
-        if (f < 0.0) f = 0.0;
-        if (f > 1.0) f = 1.0;
-        fadeMultiplier = f;
-        updateHardwareBrightness();
+        if (f < 0.0) f = 0.0; if (f > 1.0) f = 1.0;
+        fadeMultiplier = f; updateHardwareBrightness();
     }
 
     void setBrightness(uint8_t b) {
-        baseBrightness = b;
-        updateHardwareBrightness();
+        baseBrightness = b; updateHardwareBrightness();
     }
 
     void updateHardwareBrightness() {
@@ -104,57 +111,79 @@ public:
         dma->setBrightness8(gammaTable[finalBright]);
     }
 
-    void show() { dma->flipDMABuffer(); }
-    void clear() { dma->fillScreen(0); }
+    void show() { 
+        if(canvas && dma) {
+            dma->drawRGBBitmap(0, 0, canvas->getBuffer(), M_WIDTH, M_HEIGHT);
+        }
+    }
     
-    void drawPixel(int16_t x, int16_t y, uint16_t c) { dma->drawPixel(x, y, c); }
-    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { dma->fillRect(x, y, w, h, c); }
-    void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) { dma->drawFastHLine(x, y, w, c); }
-    void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) { dma->drawFastVLine(x, y, h, c); }
-    void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { dma->drawRect(x, y, w, h, c); }
+    void clear() { if(canvas) canvas->fillScreen(0); }
     
+    void drawPixel(int16_t x, int16_t y, uint16_t c) { if(canvas) canvas->drawPixel(x, y, c); }
+    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { if(canvas) canvas->fillRect(x, y, w, h, c); }
+    void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) { if(canvas) canvas->drawFastHLine(x, y, w, c); }
+    void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) { if(canvas) canvas->drawFastVLine(x, y, h, c); }
+    void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { if(canvas) canvas->drawRect(x, y, w, h, c); }
+    
+    // --- ECHTES DIMMING
     void dimRect(int x, int y, int w, int h) {
-        // Sicherstellen, dass wir im Bild bleiben
+        if (!canvas) return;
+        
+        // Bounds Check
         if (x < 0) x = 0;
         if (y < 0) y = 0;
         if (x + w > M_WIDTH) w = M_WIDTH - x;
         if (y + h > M_HEIGHT) h = M_HEIGHT - y;
-
+        
+        uint16_t* buffer = canvas->getBuffer();
+        
         for (int j = y; j < y + h; j++) {
             for (int i = x; i < x + w; i++) {
-                uint16_t c = 0; 
-                dma->drawPixel(i, j, 0x0000);
+                int index = j * M_WIDTH + i;
+                uint16_t color = buffer[index];
+                
+                // RGB565 zerlegen
+                uint16_t r = (color >> 11) & 0x1F;
+                uint16_t g = (color >> 5) & 0x3F;
+                uint16_t b = color & 0x1F;
+                
+                // Helligkeit vierteln
+                r = r >> 2;
+                g = g >> 2;
+                b = b >> 2;
+                
+                // Wieder zusammensetzen
+                buffer[index] = (r << 11) | (g << 5) | b;
             }
         }
     }
     
-    // Text Wrapper (Alte GFX Methoden)
-    void setTextColor(uint16_t c) { dma->setTextColor(c); }
-    void setCursor(int16_t x, int16_t y) { dma->setCursor(x, y); }
-    void print(String t) { dma->print(t); }
-    void setTextSize(uint8_t s) { dma->setTextSize(s); }
-    void setFont(const GFXfont *f = NULL) { dma->setFont(f); }
-    void setTextWrap(bool w) { dma->setTextWrap(w); }
+    // --- Text Wrapper ---
+    void setTextColor(uint16_t c) { if(canvas) canvas->setTextColor(c); }
+    void setCursor(int16_t x, int16_t y) { if(canvas) canvas->setCursor(x, y); }
+    void print(String t) { if(canvas) canvas->print(t); }
+    void setTextSize(uint8_t s) { if(canvas) canvas->setTextSize(s); }
+    void setFont(const GFXfont *f = NULL) { if(canvas) canvas->setFont(f); }
+    void setTextWrap(bool w) { if(canvas) canvas->setTextWrap(w); }
     
+    // U8g2 Wrapper
     void printCentered(String text, int y) {
-        dma->setTextWrap(false);
-        int16_t x1, y1;
-        uint16_t w, h;
-        dma->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+        u8g2.setFontMode(1); // Transparenz erzwingen
+        u8g2.setForegroundColor(0xFFFF); 
+        int w = u8g2.getUTF8Width(text.c_str());
         int x = (M_WIDTH - w) / 2;
-        dma->setCursor(x, y);
-        dma->print(text);
+        u8g2.setCursor(x, y); 
+        u8g2.print(text);
     }
 
     void drawScrollingText(String text, int y, int xPos, uint16_t color) {
-        dma->setTextWrap(false);
-        setTextSize(1);
-        setFont(NULL);
-        setTextColor(color);
-        setCursor(xPos, y);
-        print(text);
+        u8g2.setFontMode(1); // Transparenz erzwingen
+        u8g2.setForegroundColor(color);
+        u8g2.setCursor(xPos, y);
+        u8g2.print(text);
     }
 
+    // --- Farben ---
     uint16_t color565(uint8_t r, uint8_t g, uint8_t b) { return dma->color565(r, g, b); }
     
     uint16_t colorHSV(long hue, uint8_t sat, uint8_t val) {
