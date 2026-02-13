@@ -22,12 +22,10 @@ private:
         
         String cleanName = "";
         cleanName.reserve(filename.length() + 1); 
-        
         for (char c : filename) {
             if (isalnum(c) || c == '.' || c == '_' || c == '-') cleanName += c;
             else cleanName += '_'; 
         }
-        
         if (cleanName.length() > 30) {
             String ext = "";
             int dotIndex = cleanName.lastIndexOf('.');
@@ -39,26 +37,21 @@ private:
     }
 
     void drawUploadStats(String filename, size_t current, bool isError = false) {
-        // Performance: Nur alle 100ms zeichnen (außer bei Fehler)
         if (!isError && (millis() - lastDrawTime < 100)) return;
         lastDrawTime = millis();
-
         display.clear();
-        
         if (isError) {
-            display.setTextColor(display.color565(255, 0, 0)); // Rot
+            display.setTextColor(display.color565(255, 0, 0)); 
             display.printCentered("ERROR", 15);
             display.setTextColor(display.color565(255, 255, 255));
             display.printCentered("Write Failed!", 35);
         } else {
-            display.setTextColor(display.color565(0, 200, 255)); // Cyan
+            display.setTextColor(display.color565(0, 200, 255)); 
             display.printCentered("UPLOADING", 15);
-            
             String shortName = filename;
             if (shortName.length() > 16) shortName = "..." + shortName.substring(shortName.length()-13);
             display.setTextColor(display.color565(150, 150, 150)); 
             display.printCentered(shortName, 35);
-
             display.setTextColor(display.color565(255, 255, 255)); 
             String sizeStr;
             if (current < 1024) sizeStr = String(current) + " B";
@@ -72,13 +65,19 @@ public:
     WebManager() : server(80) {}
 
     void begin() {
-        // 1. Root Page
         server.on("/", HTTP_GET, [this]() {
+            String path = "/";
+            if (server.hasArg("dir")) {
+                path = server.arg("dir");
+            }
+            if (!path.startsWith("/")) path = "/" + path;
+            if (!path.endsWith("/") && path.length() > 1) path += "/";
+
             server.setContentLength(CONTENT_LENGTH_UNKNOWN);
             server.send(200, "text/html", ""); 
             
             String chunk = "<html><head><title>Matrix OS</title></head><body>";
-            chunk += "<h1>Matrix OS Storage</h1>";
+            chunk += "<h1>Storage: " + path + "</h1>";
             
             size_t total = LittleFS.totalBytes();
             size_t used = LittleFS.usedBytes();
@@ -91,25 +90,46 @@ public:
             chunk += "<input type='file' name='upload'><input type='submit' value='Upload'>";
             chunk += "</form><hr>";
 
+            if (path != "/") {
+                String parent = path.substring(0, path.length() - 1);
+                int lastSlash = parent.lastIndexOf('/');
+                if (lastSlash >= 0) parent = parent.substring(0, lastSlash + 1);
+                else parent = "/";
+                chunk += "<p><a href='/?dir=" + parent + "'>.. (Zurück)</a></p>";
+            }
+
             chunk += "<table border='1'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
             server.sendContent(chunk);
 
-            File root = LittleFS.open("/");
-            File file = root.openNextFile();
-            while(file){
-                if(!file.isDirectory()) {
-                    String line = "<tr><td><a href='" + String(file.name()) + "'>" + String(file.name()) + "</a></td>";
-                    line += "<td>" + String(file.size()) + " B</td>";
-                    line += "<td><a href='/delete?name=" + String(file.name()) + "'>Delete</a></td></tr>";
-                    server.sendContent(line); 
+            File root = LittleFS.open(path);
+            if (root && root.isDirectory()) {
+                File file = root.openNextFile();
+                while(file){
+                    String fileName = String(file.name());
+                    int lastSlash = fileName.lastIndexOf('/');
+                    if(lastSlash >= 0) fileName = fileName.substring(lastSlash + 1);
+
+                    String fullPath = path + fileName;
+                    if(path == "/") fullPath = "/" + fileName;
+
+                    if(file.isDirectory()) {
+                        String line = "<tr><td><b><a href='/?dir=" + fullPath + "'>[" + fileName + "]</a></b></td>";
+                        line += "<td>DIR</td>";
+                        line += "<td>-</td></tr>";
+                        server.sendContent(line);
+                    } else {
+                        String line = "<tr><td><a href='" + fullPath + "'>" + fileName + "</a></td>";
+                        line += "<td>" + String(file.size()) + " B</td>";
+                        line += "<td><a href='/delete?name=" + fullPath + "'>Delete</a></td></tr>";
+                        server.sendContent(line); 
+                    }
+                    file = root.openNextFile();
                 }
-                file = root.openNextFile();
             }
             server.sendContent("</table></body></html>");
             server.sendContent(""); 
         });
 
-        // 2. Format Handler
         server.on("/format", HTTP_POST, [this]() {
             display.clear();
             display.setTextColor(display.color565(255, 0, 0));
@@ -121,11 +141,9 @@ public:
             forceOverlay("Format OK", 3, "success");
         });
 
-        // 3. Upload Handler
         server.on("/upload", HTTP_POST, [this]() {
-            if (uploadError) {
-                server.send(507, "text/plain", "Error: Write Failed (Disk Full?)");
-            } else {
+            if (uploadError) server.send(507, "text/plain", "Error: Write Failed");
+            else {
                 server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
                 forceOverlay("Upload OK", 3, "success"); 
             }
@@ -135,14 +153,11 @@ public:
 
             if (upload.status == UPLOAD_FILE_START) {
                 uploadError = false; 
-                String filename = sanitizeFilename(upload.filename);
+                String filename = sanitizeFilename(upload.filename); 
                 Serial.print("Web: Upload Start: "); Serial.println(filename);
                 
                 uploadFile = LittleFS.open(filename, "w");
-                if (!uploadFile) {
-                    uploadError = true;
-                    return;
-                }
+                if (!uploadFile) { uploadError = true; return; }
                 
                 uploadBytesWritten = 0; 
                 lastDrawTime = 0; 
@@ -150,18 +165,16 @@ public:
                 drawUploadStats(filename, 0);
             } 
             else if (upload.status == UPLOAD_FILE_WRITE) {
-                if (uploadError) return; // Wenn Fehler, verwerfen wir den Rest
-
+                if (uploadError) return; 
                 if (uploadFile) {
                     size_t bytesWritten = uploadFile.write(upload.buf, upload.currentSize);
                     
-                    // WRITE CHECK: Hat das Schreiben geklappt?
                     if (bytesWritten < upload.currentSize) {
                         Serial.println("Web: Write failed - Disk likely Full");
-                        uploadError = true;
+                        uploadError = true; 
                         uploadFile.close();
-                        LittleFS.remove("/" + sanitizeFilename(upload.filename)); // Kaputte Datei löschen
-                        drawUploadStats("ERROR", 0, true);
+                        LittleFS.remove("/" + sanitizeFilename(upload.filename)); 
+                        drawUploadStats("ERROR", 0, true); 
                         return;
                     }
 
@@ -173,24 +186,16 @@ public:
             else if (upload.status == UPLOAD_FILE_END) {
                 if (uploadFile) {
                     uploadFile.close();
-                    if (!uploadError) {
-                        Serial.print("Web: Upload Size: "); Serial.println(uploadBytesWritten);
-                        lastDrawTime = 0; 
-                        drawUploadStats(upload.filename, uploadBytesWritten);
-                    }
+                    if (!uploadError) drawUploadStats(upload.filename, uploadBytesWritten);
                 }
             }
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
-                if (uploadFile) {
-                    uploadFile.close();
-                    LittleFS.remove("/" + upload.filename); 
-                }
+                if (uploadFile) { uploadFile.close(); LittleFS.remove("/" + upload.filename); }
                 uploadError = true;
                 drawUploadStats("ABORTED", 0, true);
             }
         });
 
-        // 4. Delete Handler
         server.on("/delete", HTTP_GET, [this]() {
             if (server.hasArg("name")) {
                 String filename = server.arg("name");

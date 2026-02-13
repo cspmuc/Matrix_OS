@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <map>
 #include <list>
+#include <vector>
 #include <HTTPClient.h> 
 #include <PNGdec.h>     
 #include "DisplayManager.h"
@@ -19,12 +20,14 @@ private:
     std::map<String, SheetDef> sheetCatalog;
     std::list<CachedIcon*> iconCache;
     
-    // PSRAM Cache Limit (Anzahl Icons)
+    // Blacklist für fehlende Icons (verhindert Lags)
+    std::vector<String> failedIcons;
+    
     const size_t MAX_CACHE_SIZE = 150;
     
-    PNG png; // Instanz für PNG Decoder
+    PNG png; 
 
-    // --- Helper für BMP Parsing ---
+    // --- Helper ---
     uint32_t read32(const uint8_t* data, int offset) {
         return data[offset] | (data[offset+1] << 8) | (data[offset+2] << 16) | (data[offset+3] << 24);
     }
@@ -45,7 +48,6 @@ private:
         data[offset+1] = (val >> 8) & 0xFF;
     }
 
-    // Generiert BMP Header für 32-Bit (für Downloads)
     void writeBmpHeader(File& f, int w, int h) {
         uint8_t header[54] = {0};
         header[0] = 'B'; header[1] = 'M';
@@ -66,7 +68,6 @@ private:
         return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     }
 
-    // ORIGINAL: Lädt aus Dotto-Sheets
     CachedIcon* loadIconFromSheet(String sheetName, int index) {
         if (sheetCatalog.find(sheetName) == sheetCatalog.end()) {
             Serial.println("ICON ERROR: Sheet not found: " + sheetName);
@@ -130,7 +131,6 @@ private:
         for (int y = 0; y < sheet.tileH; y++) {
             int srcY_Visual = startY + y;
             int bmpRow = flipY ? (height - 1 - srcY_Visual) : srcY_Visual;
-            
             size_t filePos = dataOffset + ((size_t)bmpRow * width * 4) + ((size_t)startX * 4);
             
             f.seek(filePos);
@@ -149,13 +149,11 @@ private:
                 newIcon->alpha[targetIdx] = a;
             }
         }
-
         free(lineBuffer);
         f.close();
         return newIcon;
     }
 
-    // NEU: Lädt eine einzelne BMP Datei (für heruntergeladene Icons)
     CachedIcon* loadBmpFile(String filename) {
         File f = LittleFS.open(filename, "r");
         if (!f) return nullptr;
@@ -166,7 +164,6 @@ private:
         uint32_t dataOffset = read32(header, 10);
         int32_t width = read32(header, 18);
         int32_t height = read32(header, 22);
-        
         bool flipY = true;
         if (height < 0) { height = -height; flipY = false; }
         
@@ -199,8 +196,14 @@ private:
             for (int x = 0; x < width; x++) {
                 int targetIdx = y * width + x;
                 int bufIdx = x * 4;
-                newIcon->pixels[targetIdx] = color565(lineBuffer[bufIdx+2], lineBuffer[bufIdx+1], lineBuffer[bufIdx]);
-                newIcon->alpha[targetIdx] = lineBuffer[bufIdx+3];
+                
+                uint8_t b = lineBuffer[bufIdx];
+                uint8_t g = lineBuffer[bufIdx+1];
+                uint8_t r = lineBuffer[bufIdx+2];
+                uint8_t a = lineBuffer[bufIdx+3];
+
+                newIcon->pixels[targetIdx] = color565(r, g, b);
+                newIcon->alpha[targetIdx] = a;
             }
         }
         free(lineBuffer);
@@ -208,7 +211,6 @@ private:
         return newIcon;
     }
 
-    // NEU: Online Downloader (LaMetric API -> PNG -> BMP)
     bool downloadAndConvertIcon(String id) {
         if (WiFi.status() != WL_CONNECTED) return false;
 
@@ -218,16 +220,15 @@ private:
         HTTPClient http;
         http.begin(url);
         http.setReuse(false);
+        http.setTimeout(3000); 
         
         int httpCode = http.GET();
         if (httpCode == HTTP_CODE_OK) {
-            // 1. In temporäre Datei speichern
             File f = LittleFS.open("/temp_icon.png", "w");
             http.writeToStream(&f);
             f.close();
             http.end();
             
-            // 2. PNG Decodieren
             int rc = png.open("/temp_icon.png", myOpen, myClose, myRead, mySeek, myDraw);
             if (rc == PNG_SUCCESS) {
                 int w = png.getWidth();
@@ -239,7 +240,6 @@ private:
                 png.decode(rgbaBuffer, 0); 
                 png.close();
 
-                // 3. Als 32-Bit BMP speichern
                 if (!LittleFS.exists("/icons")) LittleFS.mkdir("/icons");
                 String outName = "/icons/" + id + ".bmp";
                 
@@ -249,12 +249,10 @@ private:
                 size_t lineSize = w * 4;
                 uint8_t* lineOut = (uint8_t*)malloc(lineSize);
                 
-                // Wir speichern Bottom-Up (Standard BMP)
                 for (int y = h - 1; y >= 0; y--) {
                     uint8_t* srcRow = rgbaBuffer + (y * lineSize);
                     for(int x=0; x<w; x++) {
                         int i = x * 4;
-                        // PNGDec (RGBA) -> BMP (BGRA)
                         lineOut[i]   = srcRow[i+2]; // B
                         lineOut[i+1] = srcRow[i+1]; // G
                         lineOut[i+2] = srcRow[i];   // R
@@ -269,17 +267,12 @@ private:
                 LittleFS.remove("/temp_icon.png");
                 Serial.println("[ICON] Saved: " + outName);
                 return true;
-            } else {
-                 Serial.println("[ICON] PNG Decode Fail");
-            }
-        } else {
-            Serial.printf("[ICON] HTTP Fail: %d\n", httpCode);
-            http.end();
-        }
+            } 
+        } 
+        http.end();
         return false;
     }
 
-    // NEU: Helper für PNGDec Lib
     static void* myOpen(const char *filename, int32_t *size) {
         File f = LittleFS.open(filename, "r");
         *size = f.size();
@@ -294,13 +287,10 @@ private:
     static int32_t mySeek(PNGFILE *handle, int32_t position) {
         File* f = (File*)handle->fHandle; return f->seek(position);
     }
-    
-    // FIX: Rückgabetyp int statt void!
     static int myDraw(PNGDRAW *pDraw) {
         uint8_t* buffer = (uint8_t*)pDraw->pUser; 
-        // Kopiere Pixel in unseren Buffer
         memcpy(buffer + (pDraw->y * pDraw->iWidth * 4), pDraw->pPixels, pDraw->iWidth * 4);
-        return 1; // 1 = Continue, 0 = Abort
+        return 1;
     }
 
 public:
@@ -308,13 +298,12 @@ public:
     ~IconManager() {}
 
     void begin() {
-        if (!LittleFS.exists("/catalog.json")) { Serial.println("ICON ERROR: No catalog.json"); return; }
+        if (!LittleFS.exists("/catalog.json")) return; 
         
         File f = LittleFS.open("/catalog.json", "r");
         DynamicJsonDocument* doc = new DynamicJsonDocument(8192); 
         DeserializationError error = deserializeJson(*doc, f); f.close();
-        
-        if (error) { Serial.println("ICON ERROR: Bad JSON"); delete doc; return; }
+        if (error) { delete doc; return; }
 
         JsonObject sheets = (*doc)["sheets"];
         for (JsonPair kv : sheets) {
@@ -336,7 +325,7 @@ public:
             count++;
         }
         delete doc; 
-        Serial.print("IconEngine (Streaming): Loaded "); Serial.print(count); Serial.println(" definitions.");
+        Serial.print("IconManager: Loaded "); Serial.print(count); Serial.println(" definitions.");
     }
 
     CachedIcon* getIcon(String name) {
@@ -349,18 +338,23 @@ public:
             }
         }
         
+        // Blacklist Check
+        for(const String& bad : failedIcons) {
+            if (bad == name) return nullptr; 
+        }
+        
         CachedIcon* newIcon = nullptr;
 
-        // 2. Suche im Katalog (Dotto Sheets)
+        // 2. Suche im Katalog
         if (iconCatalog.find(name) != iconCatalog.end()) {
             IconDef& def = iconCatalog[name];
             newIcon = loadIconFromSheet(def.sheetName, def.index);
         }
-        // 3. Suche nach heruntergeladener Datei
+        // 3. Suche nach lokaler Datei
         else if (LittleFS.exists("/icons/" + name + ".bmp")) {
              newIcon = loadBmpFile("/icons/" + name + ".bmp");
         }
-        // 4. NEU: Versuch Online zu laden (nur wenn Name numerisch ist)
+        // 4. Online Download
         else {
              bool isNumeric = true;
              for(unsigned int i=0; i<name.length(); i++) if(!isDigit(name[i])) isNumeric = false;
@@ -368,7 +362,12 @@ public:
              if (isNumeric && name.length() > 0) {
                  if (downloadAndConvertIcon(name)) {
                      newIcon = loadBmpFile("/icons/" + name + ".bmp");
+                 } else {
+                     Serial.println("Icon failed forever: " + name);
+                     failedIcons.push_back(name);
                  }
+             } else {
+                 failedIcons.push_back(name);
              }
         }
         
@@ -385,41 +384,41 @@ public:
         return newIcon;
     }
 
-    // NEU: Helper für Layout
     int getIconWidth(String name) {
         CachedIcon* i = getIcon(name);
-        return i ? i->width : 16; // Fallback
+        return i ? i->width : 16; 
     }
-
+    
     int getIconHeight(String name) {
         CachedIcon* i = getIcon(name);
         return i ? i->height : 16;
     }
 
-    // NEU: drawIcon mit Skalierungs-Option
     void drawIcon(DisplayManager& display, int x, int y, String name, bool scaleTo16 = false) {
-        CachedIcon* icon = getIcon(name); if (!icon) return; 
+        CachedIcon* icon = getIcon(name); 
         
-        // Soll skaliert werden UND ist das Icon klein (8x8)?
+        if (!icon) {
+            // Rotes X zeichnen, da drawLine jetzt in DisplayManager existiert
+            display.drawLine(x, y, x + 7, y + 7, display.color565(255, 0, 0));
+            display.drawLine(x + 7, y, x, y + 7, display.color565(255, 0, 0));
+            return; 
+        }
+        
         bool doUpscale = scaleTo16 && (icon->width == 8) && (icon->height == 8);
 
         if (doUpscale) {
-            // Skalierung 8x8 -> 16x16 (Pixel verdoppeln)
             for (int iy = 0; iy < 16; iy++) {
                 for (int ix = 0; ix < 16; ix++) {
                     int screenX = x + ix; int screenY = y + iy;
                     if (screenX < 0 || screenX >= M_WIDTH || screenY < 0 || screenY >= M_HEIGHT) continue;
                     
-                    // Nächster Nachbar: Einfach durch 2 teilen
-                    int srcX = ix / 2;
-                    int srcY = iy / 2;
+                    int srcX = ix / 2; int srcY = iy / 2;
                     int i = srcY * icon->width + srcX;
                     
                     if (icon->alpha[i] > 10) display.drawPixel(screenX, screenY, icon->pixels[i]);
                 }
             }
         } else {
-            // Normales Zeichnen (1:1)
             for (int iy = 0; iy < icon->height; iy++) {
                 for (int ix = 0; ix < icon->width; ix++) {
                     int screenX = x + ix; int screenY = y + iy;

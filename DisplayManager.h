@@ -120,6 +120,8 @@ public:
     void clear() { if(canvas) canvas->fillScreen(0); }
     
     void drawPixel(int16_t x, int16_t y, uint16_t c) { if(canvas) canvas->drawPixel(x, y, c); }
+    // NEU: drawLine hinzugefügt, damit IconManager kompiliert
+    void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t c) { if(canvas) canvas->drawLine(x0, y0, x1, y1, c); }
     void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { if(canvas) canvas->fillRect(x, y, w, h, c); }
     void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) { if(canvas) canvas->drawFastHLine(x, y, w, c); }
     void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) { if(canvas) canvas->drawFastVLine(x, y, h, c); }
