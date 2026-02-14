@@ -78,41 +78,6 @@ private:
         return d.color565((number >> 16) & 0xFF, (number >> 8) & 0xFF, number & 0xFF);
     }
 
-    uint16_t getColorByName(DisplayManager& d, String name) {
-        if (name.startsWith("#")) return parseHexColor(d, name);
-        if (name == "white")   return COL_WHITE;
-        if (name == "red")     return COL_RED;
-        if (name == "green")   return COL_GREEN;
-        if (name == "blue")    return COL_BLUE;
-        
-        if (name == "highlight") return COL_HIGHLIGHT;
-        if (name == "warn")      return COL_WARN;
-        if (name == "success")   return COL_SUCCESS;
-        if (name == "info")      return COL_INFO;
-        if (name == "muted")     return COL_MUTED;
-        if (name == "warm")      return COL_WARM;
-        if (name == "cold")      return COL_COLD;
-        
-        if (name == "gold")      return COL_GOLD;
-        if (name == "silver")    return COL_SILVER;
-        
-        if (name == "pink")      return COL_NEON_PINK;
-        if (name == "cyan")      return COL_NEON_CYAN;
-        if (name == "lime")      return COL_NEON_GREEN;
-        if (name == "purple")    return COL_PURPLE;
-        if (name == "orange")    return COL_ORANGE;
-        if (name == "magenta")   return COL_MAGENTA;
-        
-        if (name == "rose")      return COL_SOFT_ROSE;
-        if (name == "sky")       return COL_SOFT_SKY;
-        if (name == "mint")      return COL_SOFT_MINT;
-        if (name == "lavender")  return COL_SOFT_LAVENDER;
-        if (name == "peach")     return COL_SOFT_PEACH;
-        if (name == "lemon")     return COL_SOFT_LEMON;
-
-        return COL_WHITE;
-    }
-
     String getIconCode(String name) {
         if (name == "sun")      return "\u2600";
         if (name == "cloud")    return "\u2601";
@@ -164,7 +129,6 @@ private:
         isLametric = false;
         bitmapName = "";
 
-        // Styles
         if (tag == "b") { state.bold = !state.bold; return ""; }
         if (tag == "u") { state.underlined = !state.underlined; return ""; }
         if (tag.startsWith("c:")) { 
@@ -202,10 +166,11 @@ private:
                 isBitmapIcon = true;
                 isLametric = true; 
                 bitmapName = id;
-                return ""; // NUR wenn gefunden: Inhalt leer, Bitmap rendern
+            } else {
+                 // Alias nicht gefunden -> Kein leeres Return! 
+                 // Wir lassen es durchlaufen, damit getIconCode("lt:...") aufgerufen wird -> "?"
             }
-            // Falls NICHT gefunden: Kein return "", sondern weiterlaufen lassen!
-            // Dann landet es unten beim Fallback und wird als "?" angezeigt.
+            return "";
         }
 
         // Fallback für alte Tags ohne Prefix (Kompatibilität)
@@ -217,17 +182,13 @@ private:
         d.setTextColor(state.color);
         
         if (isBitmapIcon) {
-            // Skalierung: Wenn LaMetric (8x8) -> Upscale auf 16x16
             bool doUpscale = isLametric; 
-            
-            // Zentrierung berechnen
             int iconH = iconManager.getIconHeight(bitmapName);
             int displayH = doUpscale ? 16 : iconH;
             int yCentered = y - (fonts.baselineOffset / 2) - (displayH / 2);
             
             iconManager.drawIcon(d, x, yCentered, bitmapName, doUpscale);
             
-            // Breite ermitteln
             int iconW = iconManager.getIconWidth(bitmapName);
             int displayW = doUpscale ? 16 : iconW;
             
@@ -252,7 +213,6 @@ private:
     int measurePart(DisplayManager& d, String text, bool isIcon, bool isBitmapIcon, String bitmapName, bool isLametric, FontPair fonts, bool bold) {
         if (isBitmapIcon) {
             int iconW = iconManager.getIconWidth(bitmapName);
-            // LaMetric Icons werden auf 16 hochskaliert
             int displayW = isLametric ? 16 : iconW;
             // FIX: Immer 1 Pixel Abstand
             return displayW + 1; 
@@ -268,6 +228,44 @@ private:
     }
 
 public:
+    // --- JETZT PUBLIC FÜR SENSOR APP ---
+    uint16_t getColorByName(DisplayManager& d, String name) {
+        if (name.startsWith("#")) return parseHexColor(d, name);
+        
+        // Case-Insensitive Vergleiche für Robustheit
+        if (name.equalsIgnoreCase("white"))   return COL_WHITE;
+        if (name.equalsIgnoreCase("red"))     return COL_RED;
+        if (name.equalsIgnoreCase("green"))   return COL_GREEN;
+        if (name.equalsIgnoreCase("blue"))    return COL_BLUE;
+        
+        if (name.equalsIgnoreCase("highlight")) return COL_HIGHLIGHT;
+        if (name.equalsIgnoreCase("warn"))      return COL_WARN;
+        if (name.equalsIgnoreCase("success"))   return COL_SUCCESS;
+        if (name.equalsIgnoreCase("info"))      return COL_INFO;
+        if (name.equalsIgnoreCase("muted"))     return COL_MUTED;
+        if (name.equalsIgnoreCase("warm"))      return COL_WARM;
+        if (name.equalsIgnoreCase("cold"))      return COL_COLD;
+        
+        if (name.equalsIgnoreCase("gold"))      return COL_GOLD;
+        if (name.equalsIgnoreCase("silver"))    return COL_SILVER;
+        
+        if (name.equalsIgnoreCase("pink"))      return COL_NEON_PINK;
+        if (name.equalsIgnoreCase("cyan"))      return COL_NEON_CYAN;
+        if (name.equalsIgnoreCase("lime"))      return COL_NEON_GREEN;
+        if (name.equalsIgnoreCase("purple"))    return COL_PURPLE;
+        if (name.equalsIgnoreCase("orange"))    return COL_ORANGE;
+        if (name.equalsIgnoreCase("magenta"))   return COL_MAGENTA;
+        
+        if (name.equalsIgnoreCase("rose"))      return COL_SOFT_ROSE;
+        if (name.equalsIgnoreCase("sky"))       return COL_SOFT_SKY;
+        if (name.equalsIgnoreCase("mint"))      return COL_SOFT_MINT;
+        if (name.equalsIgnoreCase("lavender"))  return COL_SOFT_LAVENDER;
+        if (name.equalsIgnoreCase("peach"))     return COL_SOFT_PEACH;
+        if (name.equalsIgnoreCase("lemon"))     return COL_SOFT_LEMON;
+
+        return COL_WHITE;
+    }
+
     int getLineHeight(String fontName) { return getFontByName(fontName).lineHeight; }
     
     int getBaselineOffset(String fontName) { return getFontByName(fontName).baselineOffset; }
