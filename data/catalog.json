@@ -17,6 +17,7 @@
     "unknown": { "sheet": "dotto", "index": 63 } 
   },
   "aliases": {
+    "germany": 512,
     "wetter": 2356,
     "youtube": 4567,
     "alarm": 1234
