@@ -11,7 +11,7 @@ extern IconManager iconManager;
 #define COL_RED        0xF800
 #define COL_GREEN      0x07E0
 #define COL_BLUE       0x001F
-#define COL_YELLOW     0xFFE0
+#define COL_YELLOW     0xFFE0 
 
 // Funktionale Farben
 #define COL_HIGHLIGHT  0xFD20 
@@ -59,6 +59,9 @@ struct RenderState {
 class RichText {
 private:
     const uint8_t* iconFont = u8g2_font_unifont_t_symbols;
+    
+    // Animation Speed (ms pro Frame)
+    const int ANIM_DELAY = 200;
 
     FontPair getFontByName(String name) {
         if (name.equalsIgnoreCase("Small")) {
@@ -158,8 +161,17 @@ private:
             bitmapName = tag.substring(3);
             return "";
         }
+        
+        // --- 4. LAMETRIC ANIMATED {la:123} ---
+        // Funktional identisch zu ln:, aber erlaubt semantische Unterscheidung
+        if (tag.startsWith("la:")) {
+            isBitmapIcon = true;
+            isLametric = true; 
+            bitmapName = tag.substring(3);
+            return "";
+        }
 
-        // --- 4. LAMETRIC TAG {lt:alias} ---
+        // --- 5. LAMETRIC TAG {lt:alias} ---
         if (tag.startsWith("lt:")) {
             String alias = tag.substring(3);
             String id = iconManager.resolveAlias(alias);
@@ -168,13 +180,12 @@ private:
                 isLametric = true; 
                 bitmapName = id;
             } else {
-                 // Alias nicht gefunden -> Kein leeres Return! 
-                 // Wir lassen es durchlaufen, damit getIconCode("lt:...") aufgerufen wird -> "?"
+                 // Alias nicht gefunden
             }
             return "";
         }
 
-        // Fallback für alte Tags ohne Prefix (Kompatibilität)
+        // Fallback
         isIcon = true;
         return getIconCode(tag);
     }
@@ -184,23 +195,28 @@ private:
         
         if (isBitmapIcon) {
             bool doUpscale = isLametric; 
-            int iconH = iconManager.getIconHeight(bitmapName);
+            int iconH = iconManager.getIconHeight(bitmapName); // Gibt Höhe EINES Frames
             int displayH = doUpscale ? 16 : iconH;
             int yCentered = y - (fonts.baselineOffset / 2) - (displayH / 2);
             
-            iconManager.drawIcon(d, x, yCentered, bitmapName, doUpscale);
+            // NEU: Frame berechnen
+            int frames = iconManager.getIconFrameCount(bitmapName);
+            int currentFrame = 0;
+            if (frames > 1) {
+                currentFrame = (millis() / ANIM_DELAY) % frames;
+            }
+            
+            // Frame an drawIcon übergeben
+            iconManager.drawIcon(d, x, yCentered, bitmapName, currentFrame, doUpscale);
             
             int iconW = iconManager.getIconWidth(bitmapName);
             int displayW = doUpscale ? 16 : iconW;
             
-            // FIX: Jetzt IMMER 1 Pixel Abstand nach jedem Bitmap Icon
             return displayW + 1; 
         }
         else if (isIcon) {
             d.setU8g2Font(iconFont);
             d.drawString(x, y + fonts.iconOffsetY, text, state.color);
-            
-            // FIX: Jetzt IMMER 1 Pixel Abstand nach jedem Text Icon
             return d.getTextWidth(text) + 1;
         } else {
             d.setU8g2Font(state.bold ? fonts.bold : fonts.regular);
@@ -215,12 +231,10 @@ private:
         if (isBitmapIcon) {
             int iconW = iconManager.getIconWidth(bitmapName);
             int displayW = isLametric ? 16 : iconW;
-            // FIX: Immer 1 Pixel Abstand
             return displayW + 1; 
         }
         if (isIcon) {
             d.setU8g2Font(iconFont);
-            // FIX: Immer 1 Pixel Abstand
             return d.getTextWidth(text) + 1;
         } else {
             d.setU8g2Font(bold ? fonts.bold : fonts.regular);
@@ -229,11 +243,9 @@ private:
     }
 
 public:
-    // --- JETZT PUBLIC FÜR SENSOR APP ---
     uint16_t getColorByName(DisplayManager& d, String name) {
         if (name.startsWith("#")) return parseHexColor(d, name);
         
-        // Case-Insensitive Vergleiche für Robustheit
         if (name.equalsIgnoreCase("white"))   return COL_WHITE;
         if (name.equalsIgnoreCase("red"))     return COL_RED;
         if (name.equalsIgnoreCase("green"))   return COL_GREEN;

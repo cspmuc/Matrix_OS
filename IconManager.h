@@ -12,13 +12,14 @@
 
 struct IconDef { String sheetName; int index; };
 struct SheetDef { String filePath; int cols; int tileW; int tileH; };
-struct CachedIcon { String name; uint16_t* pixels; uint8_t* alpha; unsigned long lastUsed; int width; int height; };
+// NEU: frameCount im Cache
+struct CachedIcon { String name; uint16_t* pixels; uint8_t* alpha; unsigned long lastUsed; int width; int height; int frameCount; };
 
 class IconManager {
 private:
     std::map<String, IconDef> iconCatalog;
     std::map<String, SheetDef> sheetCatalog;
-    std::map<String, String> aliasMap; // NEU: Mapping für {lt:xxx}
+    std::map<String, String> aliasMap; 
     
     std::list<CachedIcon*> iconCache;
     std::vector<String> failedIcons;
@@ -97,6 +98,7 @@ private:
         CachedIcon* newIcon = new CachedIcon();
         newIcon->width = sheet.tileW;
         newIcon->height = sheet.tileH;
+        newIcon->frameCount = 1; // Sheets sind immer statisch (ein Tile)
         
         size_t numPixels = sheet.tileW * sheet.tileH;
         newIcon->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
@@ -159,6 +161,14 @@ private:
         CachedIcon* newIcon = new CachedIcon();
         newIcon->width = width;
         newIcon->height = height;
+        
+        // NEU: Frame-Berechnung
+        // Wenn das Bild höher ist als breit (und ein Vielfaches), ist es eine Animation!
+        if (height > width && (height % width == 0)) {
+            newIcon->frameCount = height / width;
+        } else {
+            newIcon->frameCount = 1;
+        }
         
         size_t numPixels = width * height;
         newIcon->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
@@ -315,7 +325,7 @@ public:
             count++;
         }
         
-        // NEU: Aliases laden
+        // Aliases laden
         JsonObject aliases = (*doc)["aliases"];
         for (JsonPair kv : aliases) {
             String alias = kv.key().c_str();
@@ -327,12 +337,17 @@ public:
         Serial.print("IconManager: Loaded "); Serial.print(count); Serial.println(" definitions.");
     }
 
-    // NEU: Helper für Alias Lookup
     String resolveAlias(String tag) {
         if (aliasMap.find(tag) != aliasMap.end()) {
             return aliasMap[tag];
         }
         return "";
+    }
+
+    // NEU: Helfer für Frame-Anzahl
+    int getIconFrameCount(String name) {
+        CachedIcon* i = getIcon(name);
+        return i ? i->frameCount : 1;
     }
 
     CachedIcon* getIcon(String name) {
@@ -357,7 +372,7 @@ public:
             IconDef& def = iconCatalog[name];
             newIcon = loadIconFromSheet(def.sheetName, def.index);
         }
-        // 3. Local File ({ln}/{lt})
+        // 3. Local File ({ln}/{lt}/{la})
         else if (LittleFS.exists("/icons/" + name + ".bmp")) {
              newIcon = loadBmpFile("/icons/" + name + ".bmp");
         }
@@ -368,6 +383,8 @@ public:
              for(unsigned int i=0; i<name.length(); i++) if(!isDigit(name[i])) isNumeric = false;
              
              if (isNumeric && name.length() > 0) {
+                 // Versucht Download (Aktuell PNG/Statisch)
+                 // User kann später BMP-"Filmstreifen" hochladen für Animation
                  if (downloadAndConvertIcon(name)) {
                      newIcon = loadBmpFile("/icons/" + name + ".bmp");
                  } else {
@@ -375,7 +392,6 @@ public:
                      failedIcons.push_back(name);
                  }
              } else {
-                 // Kein gültiges Ziel gefunden
                  failedIcons.push_back(name);
              }
         }
@@ -398,12 +414,16 @@ public:
         return i ? i->width : 16; 
     }
     
+    // Gibt immer nur die Höhe EINES Frames zurück (Quadratisch bei Animation)
     int getIconHeight(String name) {
         CachedIcon* i = getIcon(name);
-        return i ? i->height : 16;
+        if (!i) return 16;
+        if (i->frameCount > 1) return i->width; // Frame ist quadratisch
+        return i->height;
     }
 
-    void drawIcon(DisplayManager& display, int x, int y, String name, bool scaleTo16 = false) {
+    // NEU: Mit Frame Parameter
+    void drawIcon(DisplayManager& display, int x, int y, String name, int frame = 0, bool scaleTo16 = false) {
         CachedIcon* icon = getIcon(name); 
         
         if (!icon) {
@@ -412,7 +432,14 @@ public:
             return; 
         }
         
-        bool doUpscale = scaleTo16 && (icon->width == 8) && (icon->height == 8);
+        // Frame-Offset berechnen
+        int safeFrame = frame % icon->frameCount;
+        int yOffset = safeFrame * icon->width; // Annahme: Frames sind untereinander und quadratisch
+        
+        // Bei Animationen ist die Höhe eines Frames = Breite
+        int renderHeight = (icon->frameCount > 1) ? icon->width : icon->height;
+
+        bool doUpscale = scaleTo16 && (icon->width == 8) && (renderHeight == 8);
 
         if (doUpscale) {
             for (int iy = 0; iy < 16; iy++) {
@@ -421,17 +448,21 @@ public:
                     if (screenX < 0 || screenX >= M_WIDTH || screenY < 0 || screenY >= M_HEIGHT) continue;
                     
                     int srcX = ix / 2; int srcY = iy / 2;
-                    int i = srcY * icon->width + srcX;
+                    // Offset addieren
+                    int i = (yOffset + srcY) * icon->width + srcX;
                     
                     if (icon->alpha[i] > 10) display.drawPixel(screenX, screenY, icon->pixels[i]);
                 }
             }
         } else {
-            for (int iy = 0; iy < icon->height; iy++) {
+            for (int iy = 0; iy < renderHeight; iy++) {
                 for (int ix = 0; ix < icon->width; ix++) {
                     int screenX = x + ix; int screenY = y + iy;
                     if (screenX < 0 || screenX >= M_WIDTH || screenY < 0 || screenY >= M_HEIGHT) continue;
-                    int i = iy * icon->width + ix;
+                    
+                    // Offset addieren
+                    int i = (yOffset + iy) * icon->width + ix;
+                    
                     if (icon->alpha[i] > 10) display.drawPixel(screenX, screenY, icon->pixels[i]);
                 }
             }
