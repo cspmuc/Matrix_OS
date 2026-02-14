@@ -202,8 +202,10 @@ private:
                 isBitmapIcon = true;
                 isLametric = true; 
                 bitmapName = id;
+                return ""; // NUR wenn gefunden: Inhalt leer, Bitmap rendern
             }
-            return "";
+            // Falls NICHT gefunden: Kein return "", sondern weiterlaufen lassen!
+            // Dann landet es unten beim Fallback und wird als "?" angezeigt.
         }
 
         // Fallback für alte Tags ohne Prefix (Kompatibilität)
