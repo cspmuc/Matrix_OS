@@ -16,6 +16,8 @@ private:
     unsigned long lastDrawTime = 0;
     bool uploadError = false;
 
+    // Bereinigt Dateinamen, entfernt Pfade, aber behält den Namen sauber
+    // Gibt jetzt KEIN führendes Slash mehr zurück, damit wir flexibel sind
     String sanitizeFilename(String filename) {
         int lastSlash = filename.lastIndexOf('/');
         if (lastSlash >= 0) filename = filename.substring(lastSlash + 1);
@@ -32,7 +34,6 @@ private:
             if (dotIndex > 0) ext = cleanName.substring(dotIndex);
             cleanName = cleanName.substring(0, 30 - ext.length()) + ext;
         }
-        if (!cleanName.startsWith("/")) cleanName = "/" + cleanName;
         return cleanName;
     }
 
@@ -86,7 +87,8 @@ public:
             chunk += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles loeschen?\")'>";
             chunk += "<input type='submit' value='Formatieren (Alles loeschen)' style='color:red'></form>";
             
-            chunk += "<hr><form method='POST' action='/upload' enctype='multipart/form-data'>";
+            // FIX: Upload-Action enthält jetzt das aktuelle Verzeichnis (?dir=...)
+            chunk += "<hr><form method='POST' action='/upload?dir=" + path + "' enctype='multipart/form-data'>";
             chunk += "<input type='file' name='upload'><input type='submit' value='Upload'>";
             chunk += "</form><hr>";
 
@@ -144,7 +146,10 @@ public:
         server.on("/upload", HTTP_POST, [this]() {
             if (uploadError) server.send(507, "text/plain", "Error: Write Failed");
             else {
-                server.send(200, "text/html", "Upload success! <a href='/'>Back</a>");
+                // Zurück zur letzten Seite (Directory)
+                String targetDir = "/";
+                if(server.hasArg("dir")) targetDir = server.arg("dir");
+                server.send(200, "text/html", "Upload success! <a href='/?dir=" + targetDir + "'>Back</a>");
                 forceOverlay("Upload OK", 3, "success"); 
             }
         }, [this]() { 
@@ -153,10 +158,19 @@ public:
 
             if (upload.status == UPLOAD_FILE_START) {
                 uploadError = false; 
-                String filename = sanitizeFilename(upload.filename); 
-                Serial.print("Web: Upload Start: "); Serial.println(filename);
                 
-                uploadFile = LittleFS.open(filename, "w");
+                // FIX: Zielverzeichnis aus URL-Parameter holen
+                String targetDir = "/";
+                if (server.hasArg("dir")) targetDir = server.arg("dir");
+                if (!targetDir.startsWith("/")) targetDir = "/" + targetDir;
+                if (!targetDir.endsWith("/")) targetDir += "/";
+
+                String filename = sanitizeFilename(upload.filename); 
+                String fullPath = targetDir + filename;
+
+                Serial.print("Web: Upload Start: "); Serial.println(fullPath);
+                
+                uploadFile = LittleFS.open(fullPath, "w");
                 if (!uploadFile) { uploadError = true; return; }
                 
                 uploadBytesWritten = 0; 
@@ -173,7 +187,13 @@ public:
                         Serial.println("Web: Write failed - Disk likely Full");
                         uploadError = true; 
                         uploadFile.close();
-                        LittleFS.remove("/" + sanitizeFilename(upload.filename)); 
+                        // Datei löschen (Name rekonstruieren wie oben)
+                        String targetDir = "/";
+                        if (server.hasArg("dir")) targetDir = server.arg("dir");
+                        if (!targetDir.startsWith("/")) targetDir = "/" + targetDir;
+                        if (!targetDir.endsWith("/")) targetDir += "/";
+                        LittleFS.remove(targetDir + sanitizeFilename(upload.filename)); 
+                        
                         drawUploadStats("ERROR", 0, true); 
                         return;
                     }
@@ -190,23 +210,39 @@ public:
                 }
             }
             else if (upload.status == UPLOAD_FILE_ABORTED) { 
-                if (uploadFile) { uploadFile.close(); LittleFS.remove("/" + upload.filename); }
+                if (uploadFile) { 
+                    uploadFile.close(); 
+                    String targetDir = "/";
+                    if (server.hasArg("dir")) targetDir = server.arg("dir");
+                    if (!targetDir.startsWith("/")) targetDir = "/" + targetDir;
+                    if (!targetDir.endsWith("/")) targetDir += "/";
+                    LittleFS.remove(targetDir + sanitizeFilename(upload.filename));
+                }
                 uploadError = true;
                 drawUploadStats("ABORTED", 0, true);
             }
         });
 
         server.on("/delete", HTTP_GET, [this]() {
+            String redirectUrl = "/";
             if (server.hasArg("name")) {
                 String filename = server.arg("name");
                 if(!filename.startsWith("/")) filename = "/" + filename;
+                
                 if (LittleFS.exists(filename)) {
                     LittleFS.remove(filename);
                     forceOverlay("Deleted", 2, "info");
                     Serial.println("Web: Deleted " + filename);
                 }
+
+                // FIX: Übergeordneten Ordner finden für Redirect
+                int lastSlash = filename.lastIndexOf('/');
+                if (lastSlash > 0) {
+                    String parent = filename.substring(0, lastSlash);
+                    redirectUrl = "/?dir=" + parent;
+                }
             }
-            server.sendHeader("Location", "/");
+            server.sendHeader("Location", redirectUrl);
             server.send(303);
         });
 
