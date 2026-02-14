@@ -181,7 +181,7 @@ private:
         // --- 2. ICON SHEET {ic:xxx} (lokal, dotto) ---
         if (tag.startsWith("ic:")) {
             isBitmapIcon = true;
-            isLametric = false; // Kein extra Spacing
+            isLametric = false; 
             bitmapName = tag.substring(3);
             return "";
         }
@@ -189,7 +189,7 @@ private:
         // --- 3. LAMETRIC NUMBER {ln:123} ---
         if (tag.startsWith("ln:")) {
             isBitmapIcon = true;
-            isLametric = true; // Extra Spacing
+            isLametric = true; 
             bitmapName = tag.substring(3);
             return "";
         }
@@ -200,14 +200,13 @@ private:
             String id = iconManager.resolveAlias(alias);
             if (id != "") {
                 isBitmapIcon = true;
-                isLametric = true; // Extra Spacing
-                bitmapName = id; // Wir geben die aufgelöste ID weiter
+                isLametric = true; 
+                bitmapName = id;
             }
             return "";
         }
 
         // Fallback für alte Tags ohne Prefix (Kompatibilität)
-        // Standardmäßig als Text Icon behandeln
         isIcon = true;
         return getIconCode(tag);
     }
@@ -230,13 +229,15 @@ private:
             int iconW = iconManager.getIconWidth(bitmapName);
             int displayW = doUpscale ? 16 : iconW;
             
-            // NEU: Wenn LaMetric, 1 Pixel extra Abstand
-            return displayW + (isLametric ? 1 : 0) + 1; // +1 Standard Padding
+            // FIX: Jetzt IMMER 1 Pixel Abstand nach jedem Bitmap Icon
+            return displayW + 1; 
         }
         else if (isIcon) {
             d.setU8g2Font(iconFont);
             d.drawString(x, y + fonts.iconOffsetY, text, state.color);
-            return d.getTextWidth(text);
+            
+            // FIX: Jetzt IMMER 1 Pixel Abstand nach jedem Text Icon
+            return d.getTextWidth(text) + 1;
         } else {
             d.setU8g2Font(state.bold ? fonts.bold : fonts.regular);
             d.drawString(x, y, text, state.color);
@@ -251,11 +252,13 @@ private:
             int iconW = iconManager.getIconWidth(bitmapName);
             // LaMetric Icons werden auf 16 hochskaliert
             int displayW = isLametric ? 16 : iconW;
-            // NEU: Extra Pixel für LaMetric
-            return displayW + (isLametric ? 1 : 0) + 1; 
+            // FIX: Immer 1 Pixel Abstand
+            return displayW + 1; 
         }
         if (isIcon) {
             d.setU8g2Font(iconFont);
+            // FIX: Immer 1 Pixel Abstand
+            return d.getTextWidth(text) + 1;
         } else {
             d.setU8g2Font(bold ? fonts.bold : fonts.regular);
         }
