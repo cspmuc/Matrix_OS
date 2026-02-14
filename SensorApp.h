@@ -127,7 +127,7 @@ private:
             content += "{b}" + item.text;
             
             // Übergabe der Farbe als Default Color
-            richText.drawCentered(display, 47, content, "Large", color);
+            richText.drawCentered(display, 46, content, "Medium", color);
             
         } else if (p.layoutType == 2) {
              int yPos = 33;

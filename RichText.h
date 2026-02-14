@@ -11,6 +11,7 @@ extern IconManager iconManager;
 #define COL_RED        0xF800
 #define COL_GREEN      0x07E0
 #define COL_BLUE       0x001F
+#define COL_YELLOW     0xFFE0
 
 // Funktionale Farben
 #define COL_HIGHLIGHT  0xFD20 
@@ -237,6 +238,7 @@ public:
         if (name.equalsIgnoreCase("red"))     return COL_RED;
         if (name.equalsIgnoreCase("green"))   return COL_GREEN;
         if (name.equalsIgnoreCase("blue"))    return COL_BLUE;
+        if (name.equalsIgnoreCase("yellow"))  return COL_YELLOW;
         
         if (name.equalsIgnoreCase("highlight")) return COL_HIGHLIGHT;
         if (name.equalsIgnoreCase("warn"))      return COL_WARN;
