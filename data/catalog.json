@@ -15,5 +15,10 @@
     "arrow_u": { "sheet": "dotto", "index": 16 },
     "arrow_d": { "sheet": "dotto", "index": 17 },
     "unknown": { "sheet": "dotto", "index": 63 } 
+  },
+  "aliases": {
+    "wetter": 2356,
+    "youtube": 4567,
+    "alarm": 1234
   }
 }

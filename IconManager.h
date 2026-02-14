@@ -18,9 +18,9 @@ class IconManager {
 private:
     std::map<String, IconDef> iconCatalog;
     std::map<String, SheetDef> sheetCatalog;
-    std::list<CachedIcon*> iconCache;
+    std::map<String, String> aliasMap; // NEU: Mapping für {lt:xxx}
     
-    // Blacklist für fehlende Icons (verhindert Lags)
+    std::list<CachedIcon*> iconCache;
     std::vector<String> failedIcons;
     
     const size_t MAX_CACHE_SIZE = 150;
@@ -69,15 +69,9 @@ private:
     }
 
     CachedIcon* loadIconFromSheet(String sheetName, int index) {
-        if (sheetCatalog.find(sheetName) == sheetCatalog.end()) {
-            Serial.println("ICON ERROR: Sheet not found: " + sheetName);
-            return nullptr;
-        }
+        if (sheetCatalog.find(sheetName) == sheetCatalog.end()) return nullptr;
         SheetDef& sheet = sheetCatalog[sheetName];
-        if (!LittleFS.exists(sheet.filePath)) {
-            Serial.println("ICON ERROR: File missing: " + sheet.filePath);
-            return nullptr;
-        }
+        if (!LittleFS.exists(sheet.filePath)) return nullptr;
         
         File f = LittleFS.open(sheet.filePath, "r");
         if (!f) return nullptr;
@@ -90,10 +84,7 @@ private:
         int32_t height = read32(header, 22);
         uint16_t bpp = read16(header, 28);
         
-        if (bpp != 32) {
-            Serial.printf("ICON ERROR: BMP must be 32-bit (is %d)\n", bpp);
-            f.close(); return nullptr;
-        }
+        if (bpp != 32) { f.close(); return nullptr; }
 
         bool flipY = true;
         if (height < 0) { height = -height; flipY = false; }
@@ -112,7 +103,6 @@ private:
         newIcon->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
         if (!newIcon->pixels || !newIcon->alpha) {
-            Serial.println("ICON ERROR: PSRAM Alloc failed");
             delete newIcon; f.close(); return nullptr;
         }
 
@@ -124,7 +114,6 @@ private:
         size_t lineSize = sheet.tileW * 4; 
         uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
         if (!lineBuffer) {
-             Serial.println("ICON ERROR: Line Buffer Alloc failed");
              free(newIcon->pixels); free(newIcon->alpha); delete newIcon; f.close(); return nullptr;
         }
 
@@ -314,6 +303,7 @@ public:
             def.tileW = 0; def.tileH = 0; 
             sheetCatalog[key] = def;
         }
+        
         JsonObject icons = (*doc)["icons"];
         int count = 0;
         for (JsonPair kv : icons) {
@@ -324,12 +314,29 @@ public:
             iconCatalog[key] = def;
             count++;
         }
+        
+        // NEU: Aliases laden
+        JsonObject aliases = (*doc)["aliases"];
+        for (JsonPair kv : aliases) {
+            String alias = kv.key().c_str();
+            String id = kv.value().as<String>();
+            aliasMap[alias] = id;
+        }
+        
         delete doc; 
         Serial.print("IconManager: Loaded "); Serial.print(count); Serial.println(" definitions.");
     }
 
+    // NEU: Helper für Alias Lookup
+    String resolveAlias(String tag) {
+        if (aliasMap.find(tag) != aliasMap.end()) {
+            return aliasMap[tag];
+        }
+        return "";
+    }
+
     CachedIcon* getIcon(String name) {
-        // 1. Suche im RAM Cache
+        // 1. Cache
         for (auto it = iconCache.begin(); it != iconCache.end(); ++it) {
             if ((*it)->name == name) {
                 (*it)->lastUsed = millis();
@@ -345,17 +352,18 @@ public:
         
         CachedIcon* newIcon = nullptr;
 
-        // 2. Suche im Katalog
+        // 2. Sheet Catalog ({ic})
         if (iconCatalog.find(name) != iconCatalog.end()) {
             IconDef& def = iconCatalog[name];
             newIcon = loadIconFromSheet(def.sheetName, def.index);
         }
-        // 3. Suche nach lokaler Datei
+        // 3. Local File ({ln}/{lt})
         else if (LittleFS.exists("/icons/" + name + ".bmp")) {
              newIcon = loadBmpFile("/icons/" + name + ".bmp");
         }
-        // 4. Online Download
+        // 4. Online Download ({ln}/{lt})
         else {
+             // Ist es eine ID (numerisch)?
              bool isNumeric = true;
              for(unsigned int i=0; i<name.length(); i++) if(!isDigit(name[i])) isNumeric = false;
              
@@ -367,6 +375,7 @@ public:
                      failedIcons.push_back(name);
                  }
              } else {
+                 // Kein gültiges Ziel gefunden
                  failedIcons.push_back(name);
              }
         }
@@ -398,7 +407,6 @@ public:
         CachedIcon* icon = getIcon(name); 
         
         if (!icon) {
-            // Rotes X zeichnen, da drawLine jetzt in DisplayManager existiert
             display.drawLine(x, y, x + 7, y + 7, display.color565(255, 0, 0));
             display.drawLine(x + 7, y, x, y + 7, display.color565(255, 0, 0));
             return; 

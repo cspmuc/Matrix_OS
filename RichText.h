@@ -114,33 +114,24 @@ private:
     }
 
     String getIconCode(String name) {
-        // --- KLIMA & WETTER ---
         if (name == "sun")      return "\u2600";
         if (name == "cloud")    return "\u2601";
         if (name == "rain")     return "\u2602";
         if (name == "snow")     return "\u2603";
         if (name == "zap")      return "\u26A1";
-        
-        // --- FIXES ---
         if (name == "water")    return "\u2614";
         if (name == "drop")     return "\u2614";
-        
         if (name == "co2")      return "\u2622";
         if (name == "gas")      return "\u2622";
         if (name == "bio")      return "\u2623";
-        
         if (name == "temp")     return "\u263C";
         if (name == "flame")    return "\u263C";
-
-        // --- HAUS & LEBEN ---
         if (name == "house")    return "\u2302";
         if (name == "coffee")   return "\u2615";
         if (name == "cup")      return "\u2615";
         if (name == "music")    return "\u266B";
         if (name == "heart")    return "\u2665";
         if (name == "star")     return "\u2605";
-        
-        // --- TECHNIK & GERÄTE ---
         if (name == "phone")      return "\u260E";
         if (name == "smartphone") return "\u260E";
         if (name == "print")      return "\u2709";
@@ -155,79 +146,92 @@ private:
         if (name == "switch")     return "\u2611";
         if (name == "siren")      return "\u26A0";
         if (name == "stopwatch")  return "\u231B";
-
-        // --- PERSONEN ---
         if (name == "man")      return "\u2642";
         if (name == "woman")    return "\u2640";
         if (name == "person")   return "\u265F";
         if (name == "smile")    return "\u263A";
-
-        // --- PFEILE ---
         if (name == "arrow_u")  return "\u2191"; 
         if (name == "arrow_d")  return "\u2193"; 
         if (name == "arrow_l")  return "\u2190"; 
         if (name == "arrow_r")  return "\u2192"; 
         if (name == "check")    return "\u2713"; 
-
         return "?"; 
     }
 
-    String processTag(DisplayManager& d, String tag, RenderState& state, bool& isIcon, bool& isBitmapIcon, String& bitmapName) {
+    String processTag(DisplayManager& d, String tag, RenderState& state, bool& isIcon, bool& isBitmapIcon, String& bitmapName, bool& isLametric) {
         isIcon = false;
         isBitmapIcon = false;
+        isLametric = false;
         bitmapName = "";
 
+        // Styles
         if (tag == "b") { state.bold = !state.bold; return ""; }
         if (tag == "u") { state.underlined = !state.underlined; return ""; }
-        
         if (tag.startsWith("c:")) { 
             state.color = getColorByName(d, tag.substring(2)); 
             return ""; 
         }
 
-        // Explizites Bitmap Icon: {icon:smile}
-        if (tag.startsWith("icon:")) {
-            isBitmapIcon = true;
-            bitmapName = tag.substring(5);
-            return "";
+        // --- 1. TEXT ICON {ti:xxx} ---
+        if (tag.startsWith("ti:")) {
+            isIcon = true;
+            return getIconCode(tag.substring(3));
         }
-        
-        // NEU: Automatische Erkennung numerischer IDs (LaMetric)
-        // Check: Ist es eine Zahl? z.B. {2356}
-        bool isNumeric = true;
-        for(unsigned int i=0; i<tag.length(); i++) if(!isDigit(tag[i])) isNumeric = false;
-        
-        if (isNumeric && tag.length() > 0) {
+
+        // --- 2. ICON SHEET {ic:xxx} (lokal, dotto) ---
+        if (tag.startsWith("ic:")) {
             isBitmapIcon = true;
-            bitmapName = tag; // ID wird als Name genutzt (IconManager lädt es)
+            isLametric = false; // Kein extra Spacing
+            bitmapName = tag.substring(3);
             return "";
         }
 
-        // Sonst: Font Icon
+        // --- 3. LAMETRIC NUMBER {ln:123} ---
+        if (tag.startsWith("ln:")) {
+            isBitmapIcon = true;
+            isLametric = true; // Extra Spacing
+            bitmapName = tag.substring(3);
+            return "";
+        }
+
+        // --- 4. LAMETRIC TAG {lt:alias} ---
+        if (tag.startsWith("lt:")) {
+            String alias = tag.substring(3);
+            String id = iconManager.resolveAlias(alias);
+            if (id != "") {
+                isBitmapIcon = true;
+                isLametric = true; // Extra Spacing
+                bitmapName = id; // Wir geben die aufgelöste ID weiter
+            }
+            return "";
+        }
+
+        // Fallback für alte Tags ohne Prefix (Kompatibilität)
+        // Standardmäßig als Text Icon behandeln
         isIcon = true;
         return getIconCode(tag);
     }
 
-    int drawPart(DisplayManager& d, int x, int y, String text, bool isIcon, bool isBitmapIcon, String bitmapName, FontPair fonts, RenderState state) {
+    int drawPart(DisplayManager& d, int x, int y, String text, bool isIcon, bool isBitmapIcon, String bitmapName, bool isLametric, FontPair fonts, RenderState state) {
         d.setTextColor(state.color);
         
         if (isBitmapIcon) {
-            // --- NEU: Dynamische Zentrierung & Scaling ---
-            int iconW = iconManager.getIconWidth(bitmapName);
+            // Skalierung: Wenn LaMetric (8x8) -> Upscale auf 16x16
+            bool doUpscale = isLametric; 
+            
+            // Zentrierung berechnen
             int iconH = iconManager.getIconHeight(bitmapName);
-            
-            // Wenn 8x8 -> Wir tun so, als wäre es 16x16 für das Layout (Upscaling)
-            bool upscale = (iconW == 8 && iconH == 8);
-            int displayW = upscale ? 16 : iconW;
-            int displayH = upscale ? 16 : iconH;
-            
-            // Zentrierung: Baseline - Halbe Höhe des Icons
+            int displayH = doUpscale ? 16 : iconH;
             int yCentered = y - (fonts.baselineOffset / 2) - (displayH / 2);
             
-            // Zeichnen (mit true für Upscale Request)
-            iconManager.drawIcon(d, x, yCentered, bitmapName, true);
+            iconManager.drawIcon(d, x, yCentered, bitmapName, doUpscale);
             
-            return displayW + 1; // Breite + Padding
+            // Breite ermitteln
+            int iconW = iconManager.getIconWidth(bitmapName);
+            int displayW = doUpscale ? 16 : iconW;
+            
+            // NEU: Wenn LaMetric, 1 Pixel extra Abstand
+            return displayW + (isLametric ? 1 : 0) + 1; // +1 Standard Padding
         }
         else if (isIcon) {
             d.setU8g2Font(iconFont);
@@ -242,13 +246,13 @@ private:
         }
     }
 
-    int measurePart(DisplayManager& d, String text, bool isIcon, bool isBitmapIcon, String bitmapName, FontPair fonts, bool bold) {
+    int measurePart(DisplayManager& d, String text, bool isIcon, bool isBitmapIcon, String bitmapName, bool isLametric, FontPair fonts, bool bold) {
         if (isBitmapIcon) {
             int iconW = iconManager.getIconWidth(bitmapName);
-            int iconH = iconManager.getIconHeight(bitmapName);
-            // Auch beim Messen: Wenn 8x8 -> Breite von 16 annehmen
-            bool upscale = (iconW == 8 && iconH == 8);
-            return (upscale ? 16 : iconW) + 1;
+            // LaMetric Icons werden auf 16 hochskaliert
+            int displayW = isLametric ? 16 : iconW;
+            // NEU: Extra Pixel für LaMetric
+            return displayW + (isLametric ? 1 : 0) + 1; 
         }
         if (isIcon) {
             d.setU8g2Font(iconFont);
@@ -275,21 +279,20 @@ public:
                 if(end == -1) break;
                 String tag = text.substring(i+1, end);
                 
-                bool isIcon;
-                bool isBitmapIcon;
+                bool isIcon, isBitmapIcon, isLametric;
                 String bitmapName;
                 
-                String content = processTag(d, tag, state, isIcon, isBitmapIcon, bitmapName);
+                String content = processTag(d, tag, state, isIcon, isBitmapIcon, bitmapName, isLametric);
                 
                 if(isIcon || isBitmapIcon) {
-                    totalW += measurePart(d, content, isIcon, isBitmapIcon, bitmapName, fonts, state.bold);
+                    totalW += measurePart(d, content, isIcon, isBitmapIcon, bitmapName, isLametric, fonts, state.bold);
                 }
                 i = end + 1;
             } else {
                 int nextTag = text.indexOf('{', i);
                 if(nextTag == -1) nextTag = len;
                 String part = text.substring(i, nextTag);
-                totalW += measurePart(d, part, false, false, "", fonts, state.bold);
+                totalW += measurePart(d, part, false, false, "", false, fonts, state.bold);
                 i = nextTag;
             }
         }
@@ -313,20 +316,19 @@ public:
                 if(end == -1) break;
                 String tag = text.substring(i+1, end);
                 
-                bool isIcon;
-                bool isBitmapIcon;
+                bool isIcon, isBitmapIcon, isLametric;
                 String bitmapName;
                 
-                String content = processTag(d, tag, state, isIcon, isBitmapIcon, bitmapName);
+                String content = processTag(d, tag, state, isIcon, isBitmapIcon, bitmapName, isLametric);
                 if(content != "" || isBitmapIcon) {
-                     cursorX += drawPart(d, cursorX, y, content, isIcon, isBitmapIcon, bitmapName, fonts, state);
+                     cursorX += drawPart(d, cursorX, y, content, isIcon, isBitmapIcon, bitmapName, isLametric, fonts, state);
                 }
                 i = end + 1;
             } else {
                 int nextTag = text.indexOf('{', i);
                 if(nextTag == -1) nextTag = len;
                 String part = text.substring(i, nextTag);
-                cursorX += drawPart(d, cursorX, y, part, false, false, "", fonts, state);
+                cursorX += drawPart(d, cursorX, y, part, false, false, "", false, fonts, state);
                 i = nextTag;
             }
         }
@@ -346,15 +348,14 @@ public:
                 if(end == -1) break;
                 String tag = text.substring(i+1, end);
                 
-                bool isIcon;
-                bool isBitmapIcon;
+                bool isIcon, isBitmapIcon, isLametric;
                 String bitmapName;
 
-                String content = processTag(d, tag, state, isIcon, isBitmapIcon, bitmapName);
+                String content = processTag(d, tag, state, isIcon, isBitmapIcon, bitmapName, isLametric);
                 if(isIcon || isBitmapIcon) {
-                    int w = measurePart(d, content, isIcon, isBitmapIcon, bitmapName, fonts, state.bold);
+                    int w = measurePart(d, content, isIcon, isBitmapIcon, bitmapName, isLametric, fonts, state.bold);
                     if (cursorX + w > startX + width) { cursorX = startX; cursorY += fonts.lineHeight; }
-                    drawPart(d, cursorX, cursorY, content, isIcon, isBitmapIcon, bitmapName, fonts, state);
+                    drawPart(d, cursorX, cursorY, content, isIcon, isBitmapIcon, bitmapName, isLametric, fonts, state);
                     cursorX += w;
                 }
                 i = end + 1;
@@ -367,13 +368,13 @@ public:
                 bool isSpace = (endOfWord == nextSpace);
                 String word = text.substring(i, endOfWord);
                 
-                int w = measurePart(d, word, false, false, "", fonts, state.bold);
+                int w = measurePart(d, word, false, false, "", false, fonts, state.bold);
                 if (cursorX + w > startX + width) { cursorX = startX; cursorY += fonts.lineHeight; }
-                drawPart(d, cursorX, cursorY, word, false, false, "", fonts, state);
+                drawPart(d, cursorX, cursorY, word, false, false, "", false, fonts, state);
                 cursorX += w;
                 
                 if (isSpace) {
-                     int spaceW = measurePart(d, " ", false, false, "", fonts, state.bold);
+                     int spaceW = measurePart(d, " ", false, false, "", false, fonts, state.bold);
                      if (cursorX + spaceW <= startX + width) cursorX += spaceW;
                      i = endOfWord + 1;
                 } else i = endOfWord;
