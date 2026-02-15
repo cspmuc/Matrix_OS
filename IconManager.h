@@ -280,6 +280,9 @@ private:
     // --- GIF DOWNLOADER & CONVERTER (ANIMATION) ---
     // Callback für AnimatedGIF Library
     static void GIFDrawCallback(GIFDRAW *pDraw) {
+        // FIX: Absturz verhindern, wenn pUser NULL ist (beim Scannen der Frames)
+        if (!pDraw->pUser) return;
+
         // Pointer auf Kontext holen
         GifDrawContext* ctx = (GifDrawContext*)pDraw->pUser;
         
@@ -290,7 +293,7 @@ private:
         ctx->w = pDraw->iWidth;
         ctx->h = pDraw->iHeight;
         ctx->hasTransparency = pDraw->ucHasTransparency;
-        ctx->transparentIdx = pDraw->ucTransparent; // FIX: ucTransparent statt bTransparent
+        ctx->transparentIdx = pDraw->ucTransparent; // FIX: ucTransparent verwenden
 
         uint8_t *s = pDraw->pPixels;
         // Palette in 24-Bit RGB
@@ -360,6 +363,7 @@ private:
         int frames = 0;
         while(gif.playFrame(false, NULL)) {
             frames++;
+            yield(); // WICHTIG: Watchdog füttern!
         }
         gif.close(); // Reset
 
@@ -413,7 +417,7 @@ private:
                     }
                 }
             }
-            // Disposal 3 ("Restore Previous") ist komplex und selten -> Ignorieren wir hier (bleibt stehen)
+            yield(); // WICHTIG: Watchdog füttern
         }
         
         gif.close();
