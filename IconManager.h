@@ -7,13 +7,24 @@
 #include <vector>
 #include <HTTPClient.h> 
 #include <PNGdec.h>     
+#include <AnimatedGIF.h> // WICHTIG: Bibliothek "AnimatedGIF" installieren!
 #include "DisplayManager.h"
 #include <esp_heap_caps.h> 
 
 struct IconDef { String sheetName; int index; };
 struct SheetDef { String filePath; int cols; int tileW; int tileH; };
-// NEU: frameCount im Cache
 struct CachedIcon { String name; uint16_t* pixels; uint8_t* alpha; unsigned long lastUsed; int width; int height; int frameCount; };
+
+// Helper Struct für den GIF Decoder Callback
+struct GifDrawContext {
+    uint8_t* canvas;     // Unser Puffer für den aktuellen Frame
+    int width;
+    int height;
+    int disposalMethod;  // Was passiert nach dem Frame?
+    int x, y, w, h;      // Update-Bereich des aktuellen Frames
+    int transparentIdx;  // Welcher Index ist transparent?
+    bool hasTransparency;
+};
 
 class IconManager {
 private:
@@ -27,6 +38,7 @@ private:
     const size_t MAX_CACHE_SIZE = 150;
     
     PNG png; 
+    AnimatedGIF gif; 
 
     // --- Helper ---
     uint32_t read32(const uint8_t* data, int offset) {
@@ -52,12 +64,13 @@ private:
     void writeBmpHeader(File& f, int w, int h) {
         uint8_t header[54] = {0};
         header[0] = 'B'; header[1] = 'M';
-        uint32_t dataSize = w * h * 4;
+        uint32_t dataSize = w * abs(h) * 4; // abs() falls negativ
         write32(header, 2, dataSize + 54);
         write32(header, 10, 54);
         write32(header, 14, 40);
         write32(header, 18, w);
-        write32(header, 22, h); 
+        // WICHTIG: Negative Höhe bedeutet Top-Down (Zeile 0 ist oben).
+        write32(header, 22, (uint32_t)h); 
         write16(header, 26, 1);
         write16(header, 28, 32); 
         write32(header, 30, 0);
@@ -98,7 +111,7 @@ private:
         CachedIcon* newIcon = new CachedIcon();
         newIcon->width = sheet.tileW;
         newIcon->height = sheet.tileH;
-        newIcon->frameCount = 1; // Sheets sind immer statisch (ein Tile)
+        newIcon->frameCount = 1; 
         
         size_t numPixels = sheet.tileW * sheet.tileH;
         newIcon->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
@@ -162,8 +175,6 @@ private:
         newIcon->width = width;
         newIcon->height = height;
         
-        // NEU: Frame-Berechnung
-        // Wenn das Bild höher ist als breit (und ein Vielfaches), ist es eine Animation!
         if (height > width && (height % width == 0)) {
             newIcon->frameCount = height / width;
         } else {
@@ -210,17 +221,14 @@ private:
         return newIcon;
     }
 
-    bool downloadAndConvertIcon(String id) {
-        if (WiFi.status() != WL_CONNECTED) return false;
-
+    // --- PNG DOWNLOADER (FALLBACK / STATIC) ---
+    bool downloadAndConvertPng(String id) {
         String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".png";
-        Serial.println("[ICON] Downloading: " + url);
+        Serial.println("[ICON] Try PNG: " + url);
 
         HTTPClient http;
         http.begin(url);
-        http.setReuse(false);
         http.setTimeout(3000); 
-        
         int httpCode = http.GET();
         if (httpCode == HTTP_CODE_OK) {
             File f = LittleFS.open("/temp_icon.png", "w");
@@ -232,10 +240,8 @@ private:
             if (rc == PNG_SUCCESS) {
                 int w = png.getWidth();
                 int h = png.getHeight();
-                
                 uint8_t* rgbaBuffer = (uint8_t*)malloc(w * h * 4);
                 if (!rgbaBuffer) { png.close(); return false; }
-
                 png.decode(rgbaBuffer, 0); 
                 png.close();
 
@@ -243,7 +249,7 @@ private:
                 String outName = "/icons/" + id + ".bmp";
                 
                 File fOut = LittleFS.open(outName, "w");
-                writeBmpHeader(fOut, w, h);
+                writeBmpHeader(fOut, w, h); // Standard Bottom-Up
                 
                 size_t lineSize = w * 4;
                 uint8_t* lineOut = (uint8_t*)malloc(lineSize);
@@ -259,12 +265,11 @@ private:
                     }
                     fOut.write(lineOut, lineSize);
                 }
-                
                 free(lineOut);
                 fOut.close();
                 free(rgbaBuffer);
                 LittleFS.remove("/temp_icon.png");
-                Serial.println("[ICON] Saved: " + outName);
+                Serial.println("[ICON] Saved PNG->BMP: " + outName);
                 return true;
             } 
         } 
@@ -272,6 +277,179 @@ private:
         return false;
     }
 
+    // --- GIF DOWNLOADER & CONVERTER (ANIMATION) ---
+    // Callback für AnimatedGIF Library
+    static void GIFDrawCallback(GIFDRAW *pDraw) {
+        // Pointer auf Kontext holen
+        GifDrawContext* ctx = (GifDrawContext*)pDraw->pUser;
+        
+        // Parameter speichern für spätere Disposal-Logik
+        ctx->disposalMethod = pDraw->ucDisposalMethod;
+        ctx->x = pDraw->iX;
+        ctx->y = pDraw->iY;
+        ctx->w = pDraw->iWidth;
+        ctx->h = pDraw->iHeight;
+        ctx->hasTransparency = pDraw->ucHasTransparency;
+        ctx->transparentIdx = pDraw->ucTransparent; // FIX: ucTransparent statt bTransparent
+
+        uint8_t *s = pDraw->pPixels;
+        // Palette in 24-Bit RGB
+        uint8_t *pal = (uint8_t *)pDraw->pPalette; 
+        
+        // Wir zeichnen direkt in den Canvas (RGBA)
+        // Canvas ist ctx->width breit
+        int y = pDraw->iY + pDraw->y; // Absolute Y-Position im Frame
+        if (y >= ctx->height) return;
+
+        int rowStart = (y * ctx->width * 4); // 4 Bytes pro Pixel
+
+        for (int x = 0; x < pDraw->iWidth; x++) {
+            int absX = pDraw->iX + x;
+            if (absX >= ctx->width) break;
+
+            uint8_t val = s[x];
+            if (ctx->hasTransparency && val == ctx->transparentIdx) {
+                // Transparent -> Pixel nicht ändern (altes Bild scheint durch)
+                continue;
+            }
+
+            int targetIdx = rowStart + (absX * 4);
+            // Palette lookup (RGB)
+            uint8_t r = pal[val * 3];
+            uint8_t g = pal[val * 3 + 1];
+            uint8_t b = pal[val * 3 + 2];
+            
+            // In Canvas schreiben (BGRA für BMP)
+            ctx->canvas[targetIdx]     = b;
+            ctx->canvas[targetIdx + 1] = g;
+            ctx->canvas[targetIdx + 2] = r;
+            ctx->canvas[targetIdx + 3] = 255; // Voll deckend
+        }
+    }
+
+    bool downloadAndConvertGif(String id) {
+        String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".gif";
+        Serial.println("[ICON] Try GIF: " + url);
+
+        HTTPClient http;
+        http.begin(url);
+        http.setTimeout(3000);
+        int httpCode = http.GET();
+        
+        if (httpCode != HTTP_CODE_OK) {
+            http.end();
+            return false; // GIF nicht gefunden -> Fallback zu PNG
+        }
+
+        // GIF downloaden
+        File f = LittleFS.open("/temp_icon.gif", "w");
+        http.writeToStream(&f);
+        f.close();
+        http.end();
+
+        // 1. Scan: Frames zählen
+        if (!gif.open("/temp_icon.gif", GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDrawCallback)) {
+            return false;
+        }
+        int width = gif.getCanvasWidth();
+        int height = gif.getCanvasHeight();
+        
+        Serial.printf("[ICON] GIF Info: %dx%d\n", width, height);
+        
+        // Frames zählen (Dummy Durchlauf)
+        int frames = 0;
+        while(gif.playFrame(false, NULL)) {
+            frames++;
+        }
+        gif.close(); // Reset
+
+        if (frames == 0) return false;
+
+        // 2. Verarbeitung
+        // Canvas Buffer allozieren (für EINEN Frame)
+        size_t canvasSize = width * height * 4;
+        uint8_t* canvas = (uint8_t*)malloc(canvasSize);
+        if (!canvas) return false;
+        
+        // Mit Transparenz/Schwarz initialisieren
+        memset(canvas, 0, canvasSize);
+
+        // Kontext für Callback
+        GifDrawContext ctx;
+        ctx.canvas = canvas;
+        ctx.width = width;
+        ctx.height = height;
+
+        // BMP Datei öffnen
+        if (!LittleFS.exists("/icons")) LittleFS.mkdir("/icons");
+        String outName = "/icons/" + id + ".bmp";
+        File fOut = LittleFS.open(outName, "w");
+        
+        // Header schreiben: NEGATIVE Höhe für Top-Down (einfaches Anhängen)
+        // Gesamthöhe = Höhe * Anzahl Frames
+        writeBmpHeader(fOut, width, -(height * frames));
+
+        gif.open("/temp_icon.gif", GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDrawCallback);
+        
+        for (int i = 0; i < frames; i++) {
+            // Frame dekodieren -> ruft Callback -> füllt 'canvas'
+            // Wir übergeben &ctx als User Pointer
+            gif.playFrame(false, NULL, (void*)&ctx); 
+            
+            // Den fertig komponierten Frame in die Datei schreiben
+            fOut.write(canvas, canvasSize);
+            
+            // Disposal Handling (für den NÄCHSTEN Frame im Canvas)
+            if (ctx.disposalMethod == 2) { 
+                // "Restore to Background" -> Bereich löschen
+                // Wir löschen nur das Rechteck, das gerade gezeichnet wurde
+                for (int y = ctx.y; y < ctx.y + ctx.h; y++) {
+                    if(y >= height) break;
+                    int rowStart = y * width * 4;
+                    for (int x = ctx.x; x < ctx.x + ctx.w; x++) {
+                        if(x >= width) break;
+                        int idx = rowStart + (x * 4);
+                        canvas[idx] = 0; canvas[idx+1] = 0; canvas[idx+2] = 0; canvas[idx+3] = 0;
+                    }
+                }
+            }
+            // Disposal 3 ("Restore Previous") ist komplex und selten -> Ignorieren wir hier (bleibt stehen)
+        }
+        
+        gif.close();
+        fOut.close();
+        free(canvas);
+        LittleFS.remove("/temp_icon.gif");
+        
+        Serial.printf("[ICON] Converted GIF: %d Frames saved to %s\n", frames, outName.c_str());
+        return true;
+    }
+
+    // Callbacks für AnimatedGIF File I/O
+    static void * GIFOpenFile(const char *fname, int32_t *pSize) {
+        File f = LittleFS.open(fname);
+        if (f) {
+            *pSize = f.size();
+            return new File(f);
+        }
+        return NULL;
+    }
+    static void GIFCloseFile(void *pHandle) {
+        File *f = (File *)pHandle;
+        if (f) { f->close(); delete f; }
+    }
+    static int32_t GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
+        File *f = (File *)pFile->fHandle;
+        if (f) return f->read(pBuf, iLen);
+        return 0;
+    }
+    static int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition) {
+        File *f = (File *)pFile->fHandle;
+        if (f) return f->seek(iPosition);
+        return 0;
+    }
+
+    // Callbacks für PNGdec (unverändert)
     static void* myOpen(const char *filename, int32_t *size) {
         File f = LittleFS.open(filename, "r");
         *size = f.size();
@@ -287,9 +465,7 @@ private:
         File* f = (File*)handle->fHandle; return f->seek(position);
     }
     static int myDraw(PNGDRAW *pDraw) {
-        uint8_t* buffer = (uint8_t*)pDraw->pUser; 
-        memcpy(buffer + (pDraw->y * pDraw->iWidth * 4), pDraw->pPixels, pDraw->iWidth * 4);
-        return 1;
+        return 1; // Wir decoden komplett im Speicher in downloadAndConvertPng
     }
 
 public:
@@ -334,6 +510,10 @@ public:
         }
         
         delete doc; 
+        
+        // Init GIF Lib
+        gif.begin(LITTLE_ENDIAN_PIXELS);
+        
         Serial.print("IconManager: Loaded "); Serial.print(count); Serial.println(" definitions.");
     }
 
@@ -344,7 +524,6 @@ public:
         return "";
     }
 
-    // NEU: Helfer für Frame-Anzahl
     int getIconFrameCount(String name) {
         CachedIcon* i = getIcon(name);
         return i ? i->frameCount : 1;
@@ -383,9 +562,15 @@ public:
              for(unsigned int i=0; i<name.length(); i++) if(!isDigit(name[i])) isNumeric = false;
              
              if (isNumeric && name.length() > 0) {
-                 // Versucht Download (Aktuell PNG/Statisch)
-                 // User kann später BMP-"Filmstreifen" hochladen für Animation
-                 if (downloadAndConvertIcon(name)) {
+                 // ZUERST VERSUCHEN: Animiertes GIF downloaden und konvertieren
+                 bool success = downloadAndConvertGif(name);
+                 
+                 // FALLS FEHLGESCHLAGEN: Statisches PNG versuchen
+                 if (!success) {
+                     success = downloadAndConvertPng(name);
+                 }
+
+                 if (success) {
                      newIcon = loadBmpFile("/icons/" + name + ".bmp");
                  } else {
                      Serial.println("Icon failed forever: " + name);
@@ -414,7 +599,6 @@ public:
         return i ? i->width : 16; 
     }
     
-    // Gibt immer nur die Höhe EINES Frames zurück (Quadratisch bei Animation)
     int getIconHeight(String name) {
         CachedIcon* i = getIcon(name);
         if (!i) return 16;
@@ -422,7 +606,6 @@ public:
         return i->height;
     }
 
-    // NEU: Mit Frame Parameter
     void drawIcon(DisplayManager& display, int x, int y, String name, int frame = 0, bool scaleTo16 = false) {
         CachedIcon* icon = getIcon(name); 
         
@@ -434,9 +617,8 @@ public:
         
         // Frame-Offset berechnen
         int safeFrame = frame % icon->frameCount;
-        int yOffset = safeFrame * icon->width; // Annahme: Frames sind untereinander und quadratisch
+        int yOffset = safeFrame * icon->width; 
         
-        // Bei Animationen ist die Höhe eines Frames = Breite
         int renderHeight = (icon->frameCount > 1) ? icon->width : icon->height;
 
         bool doUpscale = scaleTo16 && (icon->width == 8) && (renderHeight == 8);
@@ -448,7 +630,6 @@ public:
                     if (screenX < 0 || screenX >= M_WIDTH || screenY < 0 || screenY >= M_HEIGHT) continue;
                     
                     int srcX = ix / 2; int srcY = iy / 2;
-                    // Offset addieren
                     int i = (yOffset + srcY) * icon->width + srcX;
                     
                     if (icon->alpha[i] > 10) display.drawPixel(screenX, screenY, icon->pixels[i]);
@@ -460,7 +641,6 @@ public:
                     int screenX = x + ix; int screenY = y + iy;
                     if (screenX < 0 || screenX >= M_WIDTH || screenY < 0 || screenY >= M_HEIGHT) continue;
                     
-                    // Offset addieren
                     int i = (yOffset + iy) * icon->width + ix;
                     
                     if (icon->alpha[i] > 10) display.drawPixel(screenX, screenY, icon->pixels[i]);
