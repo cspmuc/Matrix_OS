@@ -6,7 +6,7 @@
 #include <list>
 #include <vector>
 #include <HTTPClient.h> 
-#include <WiFiClientSecure.h> // Wichtig für HTTPS
+#include <WiFiClientSecure.h> 
 #include <PNGdec.h>     
 #include <AnimatedGIF.h> 
 #include "DisplayManager.h"
@@ -61,9 +61,8 @@ private:
     
     PNG png; 
     AnimatedGIF gif; 
-    
-    static File staticGifFile; 
 
+    // --- Helper ---
     uint32_t read32(const uint8_t* data, int offset) {
         return data[offset] | (data[offset+1] << 8) | (data[offset+2] << 16) | (data[offset+3] << 24);
     }
@@ -100,20 +99,7 @@ private:
         return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     }
 
-    void printBufferDebug(uint8_t* buffer, int w, int h, int frameIdx) {
-        Serial.printf("[DEBUG BMP] Frame %d Dump (%dx%d):\n", frameIdx, w, h);
-        for (int y = 0; y < h; y++) {
-            Serial.print("R: ");
-            for (int x = 0; x < w; x++) {
-                int idx = (y * w + x) * 4;
-                uint8_t r = buffer[idx+2]; 
-                if(r==0 && buffer[idx+1]==0 && buffer[idx]==0) Serial.print(".. ");
-                else Serial.printf("%02X ", r);
-            }
-            Serial.println();
-        }
-    }
-
+    // --- Loading Logic ---
     AnimatedIcon* loadAnimFromFS(String filename, String name) {
         if (!LittleFS.exists(filename)) return nullptr;
         File f = LittleFS.open(filename, "r");
@@ -148,11 +134,17 @@ private:
         anim->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         anim->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
-        if (!anim->pixels || !anim->alpha) { delete anim; f.close(); return nullptr; }
+        if (!anim->pixels || !anim->alpha) { 
+            if(anim->pixels) free(anim->pixels);
+            if(anim->alpha) free(anim->alpha);
+            delete anim; f.close(); return nullptr; 
+        }
 
         size_t lineSize = w * 4;
         uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
-        if (!lineBuffer) { free(anim->pixels); free(anim->alpha); delete anim; f.close(); return nullptr; }
+        if (!lineBuffer) { 
+            free(anim->pixels); free(anim->alpha); delete anim; f.close(); return nullptr; 
+        }
 
         for (int y = 0; y < h; y++) {
             if (y % 16 == 0) esp_task_wdt_reset(); 
@@ -257,20 +249,11 @@ private:
         free(lineBuffer); f.close(); return newIcon;
     }
 
-    static void* GIFOpen(const char *filename, int32_t *size) {
-        if (staticGifFile) { *size = staticGifFile.size(); return (void*)1; }
-        return NULL;
-    }
+    // --- GIF Callbacks ---
+    static void* GIFOpen(const char *filename, int32_t *size) { return (void*)1; }
     static void GIFClose(void *handle) { }
-    static int32_t GIFRead(GIFFILE *handle, uint8_t *buffer, int32_t length) {
-        if (!staticGifFile) return 0;
-        return staticGifFile.read(buffer, length);
-    }
-    static int32_t GIFSeek(GIFFILE *handle, int32_t position) {
-        if (!staticGifFile) return -1;
-        if (staticGifFile.seek(position)) return staticGifFile.position();
-        return -1;
-    }
+    static int32_t GIFRead(GIFFILE *handle, uint8_t *buffer, int32_t length) { return 0; }
+    static int32_t GIFSeek(GIFFILE *handle, int32_t position) { return 0; }
 
     static void GIFDrawCallback(GIFDRAW *pDraw) {
         GifConvertContext* ctx = (GifConvertContext*)pDraw->pUser;
@@ -281,7 +264,7 @@ private:
         ctx->h = pDraw->iHeight;
 
         uint8_t *s = pDraw->pPixels;
-        uint16_t *pPalette = (uint16_t*)pDraw->pPalette;
+        uint8_t *pPalette = (uint8_t*)pDraw->pPalette;
         if (!pPalette) return; 
 
         uint8_t* d = ctx->canvasBuffer;
@@ -294,31 +277,48 @@ private:
             int x_abs = pDraw->iX + x;
             if (x_abs >= ctx->width) continue;
             
+            // Transparente Pixel überspringen (nicht malen)
             if (pDraw->ucHasTransparency && s[x] == pDraw->ucTransparent) continue; 
 
-            uint16_t c = pPalette[s[x]];
-            uint8_t r = (c & 0xF800) >> 8;
-            uint8_t g = (c & 0x07E0) >> 3;
-            uint8_t b = (c & 0x001F) << 3;
-            r = (r << 3) | (r >> 2);
-            g = (g << 2) | (g >> 4);
-            b = (b << 3) | (b >> 2);
+            uint16_t palIdx = s[x] * 3;
+            uint8_t r = pPalette[palIdx];
+            uint8_t g = pPalette[palIdx+1];
+            uint8_t b = pPalette[palIdx+2];
             
             int idx = lineOffset + (x_abs * 4);
-            d[idx]   = b; 
+            d[idx] = b; 
             d[idx+1] = g; 
             d[idx+2] = r; 
-            d[idx+3] = 255; 
+            d[idx+3] = 255; // Gezeichnete Pixel sind IMMER opak!
         }
+    }
+
+    bool downloadFile(HTTPClient& http, File& f) {
+        int len = http.getSize();
+        int total = 0;
+        uint8_t buff[512] = { 0 };
+        WiFiClient * stream = http.getStreamPtr();
+        unsigned long start = millis();
+
+        while (http.connected() || (stream && stream->available())) {
+            size_t size = stream ? stream->available() : 0;
+            if (size) {
+                int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
+                f.write(buff, c);
+                total += c;
+                start = millis(); 
+            } else { delay(10); }
+            if (millis() - start > 3000) break;
+            if (len > 0 && total >= len) break;
+            esp_task_wdt_reset();
+        }
+        return total > 0;
     }
 
     bool downloadAndConvert(String id, String targetFolder, bool forceAnim) {
         if (WiFi.status() != WL_CONNECTED) return false;
 
-        // Cleanup
-        if (staticGifFile) staticGifFile.close(); 
         LittleFS.remove("/temp_dl.dat");
-
         bool success = false;
         String outName = targetFolder + id + ".bmp";
 
@@ -327,45 +327,41 @@ private:
             Serial.println("[ICON] Trying GIF download: " + url);
 
             WiFiClientSecure client;
-            client.setInsecure(); // WICHTIG: Zertifikatsprüfung ignorieren für zuverlässigen DL
-            
+            client.setInsecure();
             HTTPClient http;
             http.begin(client, url);
+            http.setUserAgent("Mozilla/5.0 (ESP32)");
             http.setReuse(false);
             http.setTimeout(5000); 
             
             int httpCode = http.GET();
-            bool isGif = (httpCode == HTTP_CODE_OK);
-            
-            if (isGif) {
+            if (httpCode == HTTP_CODE_OK) {
                 File f = LittleFS.open("/temp_dl.dat", "w");
                 if (f) {
-                    http.writeToStream(&f);
-                    size_t fSize = f.size();
-                    f.close();
-                    
-                    Serial.printf("[ICON] Downloaded size: %d bytes\n", fSize);
-                    
-                    if (fSize > 50) {
-                        esp_task_wdt_reset();
-                        staticGifFile = LittleFS.open("/temp_dl.dat", "r");
+                    if (downloadFile(http, f)) {
+                        f.close();
+                        File fRead = LittleFS.open("/temp_dl.dat", "r");
+                        size_t fSize = fRead.size();
+                        uint8_t* gifRamBuffer = nullptr;
                         
-                        if (staticGifFile) {
-                            if (gif.open(NULL, GIFOpen, GIFClose, GIFRead, GIFSeek, GIFDrawCallback)) {
-                                GIFINFO info;
-                                int frames = 0, w = 0, h = 0;
-                                if (gif.getInfo(&info)) {
-                                    frames = info.iFrameCount;
-                                    w = gif.getCanvasWidth();
-                                    h = gif.getCanvasHeight();
-                                }
-                                Serial.printf("[GIF INFO] %dx%d, %d Frames.\n", w, h, frames);
+                        if (fSize > 50) {
+                            gifRamBuffer = (uint8_t*)malloc(fSize);
+                            if (gifRamBuffer) {
+                                fRead.read(gifRamBuffer, fSize);
+                                fRead.close();
+                                esp_task_wdt_reset();
                                 
-                                staticGifFile.seek(0); 
-
-                                if (frames > 0 && w > 0 && h > 0) {
-                                    if (gif.open(NULL, GIFOpen, GIFClose, GIFRead, GIFSeek, GIFDrawCallback)) {
-                                        
+                                if (gif.open(gifRamBuffer, fSize, GIFDrawCallback)) {
+                                    GIFINFO info;
+                                    int frames = 0, w = 0, h = 0;
+                                    if (gif.getInfo(&info)) {
+                                        frames = info.iFrameCount;
+                                        w = gif.getCanvasWidth();
+                                        h = gif.getCanvasHeight();
+                                    }
+                                    Serial.printf("[GIF INFO] %dx%d, %d Frames.\n", w, h, frames);
+                                    
+                                    if (frames > 0 && w > 0 && h > 0) {
                                         int totalH = h * frames;
                                         size_t stripSize = w * totalH * 4;
                                         size_t canvasSize = w * h * 4;
@@ -374,6 +370,7 @@ private:
                                         uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
                                         
                                         if (stripBuffer && canvasBuffer) {
+                                            // FIX 1: Puffer initial mit TRANSPARENT füllen (0,0,0,0)
                                             memset(stripBuffer, 0, stripSize); 
                                             memset(canvasBuffer, 0, canvasSize); 
                                             
@@ -387,22 +384,25 @@ private:
                                             
                                             for (int i=0; i<frames; i++) {
                                                 ctx.frameIndex = i;
+                                                
+                                                // --- DISPOSAL LOGIC ---
                                                 if (prevDispose == 2) { 
+                                                    // FIX 2: Lösche auf TRANSPARENT (0)
                                                     for(int dy=prevY; dy<prevY+prevH; dy++) {
                                                         if(dy>=h) break;
                                                         for(int dx=prevX; dx<prevX+prevW; dx++) {
                                                             if(dx>=w) break;
                                                             int idx = (dy*w + dx)*4;
-                                                            canvasBuffer[idx] = 0; canvasBuffer[idx+1] = 0;
-                                                            canvasBuffer[idx+2] = 0; canvasBuffer[idx+3] = 0;
+                                                            canvasBuffer[idx] = 0; 
+                                                            canvasBuffer[idx+1] = 0;
+                                                            canvasBuffer[idx+2] = 0; 
+                                                            canvasBuffer[idx+3] = 0; // Transparent!
                                                         }
                                                     }
                                                 }
-                                                
-                                                int rc = gif.playFrame(false, NULL, &ctx); 
-                                                
-                                                if (i <= 1) printBufferDebug(canvasBuffer, w, h, i);
 
+                                                gif.playFrame(false, NULL, &ctx); 
+                                                
                                                 size_t offset = i * canvasSize;
                                                 memcpy(stripBuffer + offset, canvasBuffer, canvasSize);
 
@@ -425,84 +425,77 @@ private:
                                             success = true;
                                             Serial.println("[ICON] Saved ANIMATED BMP: " + outName);
                                         } else {
-                                            Serial.println("[ICON] RAM fail");
                                             if(stripBuffer) free(stripBuffer);
                                             if(canvasBuffer) free(canvasBuffer);
                                             gif.close();
                                         }
-                                    }
-                                } else { gif.close(); }
+                                    } 
+                                } 
+                                if(gifRamBuffer) free(gifRamBuffer);
                             } 
-                            staticGifFile.close(); 
-                        }
-                    } else {
-                        Serial.println("[ICON] File too small (GIF).");
-                    }
-                } else {
-                    Serial.println("[ICON] Failed to open temp file for write.");
-                }
+                        } 
+                        if(fRead) fRead.close();
+                    } else { f.close(); }
+                } 
                 LittleFS.remove("/temp_dl.dat");
-            } else {
-                Serial.printf("[ICON] GIF HTTP Fail: %d\n", httpCode);
-            }
+            } 
+            client.stop(); 
             http.end();
         }
 
-        // 2. Fallback PNG (NUR WENN GIF FEHLSCHLUG)
+        // 2. Fallback PNG
         if (!success) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".png";
             Serial.println("[ICON] Downloading PNG: " + id);
             
             WiFiClientSecure client;
-            client.setInsecure(); // Auch für PNG Fallback
-            
+            client.setInsecure(); 
             HTTPClient http;
             http.begin(client, url);
+            http.setUserAgent("Mozilla/5.0 (ESP32)");
             http.setReuse(false);
             http.setTimeout(3000);
+            
             int httpCode = http.GET();
             if (httpCode == HTTP_CODE_OK) {
                  File f = LittleFS.open("/temp_dl.dat", "w");
-                 http.writeToStream(&f);
-                 f.close();
-                 http.end();
-                 
-                 int rc = png.open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, myDraw);
-                 if (rc == PNG_SUCCESS) {
-                    int w = png.getWidth();
-                    int h = png.getHeight();
-                    uint8_t* rgbaBuffer = (uint8_t*)malloc(w * h * 4);
-                    if (rgbaBuffer) {
-                        png.decode(rgbaBuffer, 0); 
-                        png.close();
-                        
-                        File fOut = LittleFS.open(outName, "w");
-                        writeBmpHeader(fOut, w, h);
-                        size_t lineSize = w * 4;
-                        uint8_t* lineOut = (uint8_t*)malloc(lineSize);
-                        for (int y = h - 1; y >= 0; y--) {
-                            uint8_t* srcRow = rgbaBuffer + (y * lineSize);
-                            for(int x=0; x<w; x++) {
-                                int i = x * 4;
-                                lineOut[i]   = srcRow[i+2]; 
-                                lineOut[i+1] = srcRow[i+1]; 
-                                lineOut[i+2] = srcRow[i];   
-                                lineOut[i+3] = srcRow[i+3]; 
+                 if (f && downloadFile(http, f)) {
+                     f.close();
+                     int rc = png.open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, myDraw);
+                     if (rc == PNG_SUCCESS) {
+                        int w = png.getWidth();
+                        int h = png.getHeight();
+                        uint8_t* rgbaBuffer = (uint8_t*)malloc(w * h * 4);
+                        if (rgbaBuffer) {
+                            png.decode(rgbaBuffer, 0); 
+                            png.close();
+                            File fOut = LittleFS.open(outName, "w");
+                            writeBmpHeader(fOut, w, h);
+                            size_t lineSize = w * 4;
+                            uint8_t* lineOut = (uint8_t*)malloc(lineSize);
+                            for (int y = h - 1; y >= 0; y--) {
+                                uint8_t* srcRow = rgbaBuffer + (y * lineSize);
+                                for(int x=0; x<w; x++) {
+                                    int i = x * 4;
+                                    lineOut[i]   = srcRow[i+2]; 
+                                    lineOut[i+1] = srcRow[i+1]; 
+                                    lineOut[i+2] = srcRow[i];   
+                                    lineOut[i+3] = srcRow[i+3]; 
+                                }
+                                fOut.write(lineOut, lineSize);
                             }
-                            fOut.write(lineOut, lineSize);
-                        }
-                        free(lineOut);
-                        fOut.close();
-                        free(rgbaBuffer);
-                        success = true;
-                        Serial.println("[ICON] Saved as BMP: " + outName);
-                    } else png.close();
-                }
-                LittleFS.remove("/temp_dl.dat");
-            } else {
-                Serial.println("[ICON] PNG Download Failed: " + String(httpCode));
-                http.end();
+                            free(lineOut);
+                            fOut.close();
+                            free(rgbaBuffer);
+                            success = true;
+                            Serial.println("[ICON] Saved as BMP: " + outName);
+                        } else png.close();
+                    }
+                 } else if (f) f.close();
+                 LittleFS.remove("/temp_dl.dat");
             }
+            client.stop(); 
+            http.end();
         }
         return success;
     }
@@ -717,5 +710,3 @@ public:
         return i ? i->height : 16;
     }
 };
-
-File IconManager::staticGifFile;
