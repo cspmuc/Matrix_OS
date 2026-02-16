@@ -12,7 +12,6 @@
 #include <esp_heap_caps.h> 
 #include <esp_task_wdt.h> 
 
-// --- STRUKTUREN ---
 struct IconDef { String sheetName; int index; };
 struct SheetDef { String filePath; int cols; int tileW; int tileH; };
 
@@ -37,13 +36,11 @@ struct AnimatedIcon {
     unsigned long lastUsed;
 };
 
-// Context für den GIF Callback (Erweitert um Canvas)
+// Context für den GIF Callback
 struct GifConvertContext {
-    uint8_t* canvasBuffer; // Hält den aktuellen visuellen Zustand (RGBA)
-    int width;             // Canvas Breite
-    int height;            // Canvas Höhe
-    
-    // Status des aktuellen Frames (für Disposal Logic)
+    uint8_t* canvasBuffer; // RGBA 8888
+    int width;
+    int height; 
     int dispose;           
     int x, y, w, h;        
 };
@@ -122,7 +119,6 @@ private:
         int frames = 1;
         int frameH = h;
         
-        // Auto-Detect Strip
         if (h > w && (h % w == 0)) {
             frames = h / w;
             frameH = w;
@@ -137,7 +133,7 @@ private:
         anim->height = frameH;
         anim->totalHeight = h;
         anim->frameCount = frames;
-        anim->delayMs = 500; 
+        anim->delayMs = 100; // Standard Delay
         anim->lastUsed = millis();
 
         size_t numPixels = w * h;
@@ -198,6 +194,7 @@ private:
         newIcon->width = width;
         newIcon->height = height;
         size_t numPixels = width * height;
+        
         newIcon->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         newIcon->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
@@ -247,8 +244,10 @@ private:
         newIcon->width = sheet.tileW;
         newIcon->height = sheet.tileH;
         size_t numPixels = sheet.tileW * sheet.tileH;
+        
         newIcon->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         newIcon->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
+        
         int col = index % sheet.cols;
         int row = index / sheet.cols;
         int startX = col * sheet.tileW;
@@ -269,35 +268,26 @@ private:
         free(lineBuffer); f.close(); return newIcon;
     }
 
-    // --- GIF Callbacks (Spezifisch für GIFFILE*) ---
+    // --- GIF Callbacks ---
     static void* GIFOpen(const char *filename, int32_t *size) {
         File f = LittleFS.open(filename, "r");
         if (size) *size = f.size();
         return new File(f);
     }
     static void GIFClose(void *handle) { 
-        if (handle) {
-            File* f = (File*)handle; 
-            f->close(); 
-            delete f; 
-        }
+        if (handle) { File* f = (File*)handle; f->close(); delete f; }
     }
     static int32_t GIFRead(GIFFILE *handle, uint8_t *buffer, int32_t length) {
-        File* f = (File*)handle->fHandle; 
-        if (!f) return 0;
-        return f->read(buffer, length);
+        File* f = (File*)handle->fHandle; if (!f) return 0; return f->read(buffer, length);
     }
     static int32_t GIFSeek(GIFFILE *handle, int32_t position) {
-        File* f = (File*)handle->fHandle; 
-        if (!f) return 0;
-        return f->seek(position);
+        File* f = (File*)handle->fHandle; if (!f) return 0; return f->seek(position);
     }
 
-    // --- GIF Draw Callback ---
+    // --- GIF Draw Callback (RGB565 to RGB888) ---
     static void GIFDrawCallback(GIFDRAW *pDraw) {
         GifConvertContext* ctx = (GifConvertContext*)pDraw->pUser;
         
-        // Speichere Infos für Disposal
         ctx->dispose = pDraw->ucDisposalMethod;
         ctx->x = pDraw->iX;
         ctx->y = pDraw->iY;
@@ -305,11 +295,13 @@ private:
         ctx->h = pDraw->iHeight;
 
         uint8_t *s = pDraw->pPixels;
-        uint16_t *pusPalette = pDraw->pPalette;
+        // WICHTIG: Mit GIF_PALETTE_RGB565_LE ist pPalette ein uint16_t Array
+        uint16_t *pPalette = (uint16_t*)pDraw->pPalette;
         
-        // Wir zeichnen auf den Canvas (persistenter Buffer für einen Frame)
-        uint8_t* d = ctx->canvasBuffer;
+        if (!pPalette) return; 
 
+        uint8_t* d = ctx->canvasBuffer;
+        
         int y_abs = pDraw->iY + pDraw->y;
         if (y_abs >= ctx->height) return;
 
@@ -323,16 +315,25 @@ private:
                 continue; 
             }
 
-            uint16_t c565 = pusPalette[s[x]];
-            uint8_t r = (c565 & 0xF800) >> 8;
-            uint8_t g = (c565 & 0x07E0) >> 3;
-            uint8_t b = (c565 & 0x001F) << 3;
+            // 16-Bit Farbe holen
+            uint16_t c = pPalette[s[x]];
+            
+            // Konvertieren nach 8-Bit (RGB)
+            // 565: RRRRRGGG GGGBBBBB
+            uint8_t r = (c & 0xF800) >> 8;
+            uint8_t g = (c & 0x07E0) >> 3;
+            uint8_t b = (c & 0x001F) << 3;
+            
+            // Auf 8-Bit strecken (für volle Helligkeit)
+            r = (r << 3) | (r >> 2);
+            g = (g << 2) | (g >> 4);
+            b = (b << 3) | (b >> 2);
             
             int idx = lineOffset + (x_abs * 4);
             d[idx]   = r;
             d[idx+1] = g;
             d[idx+2] = b;
-            d[idx+3] = 255; 
+            d[idx+3] = 255; // Alpha = voll sichtbar
         }
     }
 
@@ -342,24 +343,19 @@ private:
         bool success = false;
         String outName = targetFolder + id + ".bmp";
 
-        // 1. NUR wenn forceAnim (für {la:}), versuchen wir GIF
         if (forceAnim) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".gif";
-            Serial.println("[ICON] Trying GIF download: " + id);
+            Serial.println("[ICON] Trying GIF download: " + url);
 
             HTTPClient http;
             http.begin(url);
             http.setReuse(false);
-            http.setTimeout(3000); 
+            http.setTimeout(4000); 
             
             int httpCode = http.GET();
             bool isGif = false;
-            
-            if (httpCode == HTTP_CODE_OK) {
-                isGif = true;
-            } else {
-                 Serial.println("[ICON] GIF download failed. Code: " + String(httpCode));
-            }
+            if (httpCode == HTTP_CODE_OK) isGif = true;
+            else Serial.println("[ICON] GIF download failed. Code: " + String(httpCode));
 
             if (isGif) {
                 File f = LittleFS.open("/temp_dl.dat", "w");
@@ -368,7 +364,6 @@ private:
                 http.end();
                 esp_task_wdt_reset();
 
-                // GIF Verarbeitung
                 if (gif.open("/temp_dl.dat", GIFOpen, GIFClose, GIFRead, GIFSeek, GIFDrawCallback)) {
                     
                     GIFINFO info;
@@ -388,6 +383,7 @@ private:
                         size_t stripSize = w * totalH * 4;
                         size_t canvasSize = w * h * 4;
                         
+                        // Buffer im PSRAM
                         uint8_t* stripBuffer = (uint8_t*)heap_caps_malloc(stripSize, MALLOC_CAP_SPIRAM);
                         uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
                         
@@ -405,9 +401,8 @@ private:
                             int prevX=0, prevY=0, prevW=w, prevH=h;
                             
                             for (int i=0; i<frames; i++) {
-                                // 1. Disposal des VORHERIGEN Frames anwenden
+                                // 1. Disposal Logic
                                 if (prevDispose == 2) { 
-                                    // Restore Background
                                     for(int dy=prevY; dy<prevY+prevH; dy++) {
                                         if(dy >= h) break;
                                         for(int dx=prevX; dx<prevX+prevW; dx++) {
@@ -419,10 +414,10 @@ private:
                                     }
                                 } 
                                 
-                                // 2. Nächsten Frame malen
+                                // 2. Draw Frame
                                 gif.playFrame(false, NULL, &ctx); 
                                 
-                                // 3. Canvas in den Strip kopieren
+                                // 3. Copy to Strip
                                 size_t offset = i * canvasSize;
                                 memcpy(stripBuffer + offset, canvasBuffer, canvasSize);
 
@@ -444,22 +439,25 @@ private:
                                 uint8_t* srcRow = stripBuffer + (y * lineSize);
                                 for(int x=0; x<w; x++) {
                                     int i = x * 4;
-                                    lineOut[i]   = srcRow[i+2]; 
-                                    lineOut[i+1] = srcRow[i+1]; 
-                                    lineOut[i+2] = srcRow[i];   
-                                    lineOut[i+3] = srcRow[i+3]; 
+                                    lineOut[i]   = srcRow[i+2]; // B
+                                    lineOut[i+1] = srcRow[i+1]; // G
+                                    lineOut[i+2] = srcRow[i];   // R
+                                    lineOut[i+3] = srcRow[i+3]; // A
                                 }
                                 fOut.write(lineOut, lineSize);
                             }
                             free(lineOut);
                             fOut.close();
+                            
                             free(stripBuffer);
                             free(canvasBuffer);
+                            
                             success = true;
                             LittleFS.remove("/temp_dl.dat");
+                            Serial.println("[ICON] Saved ANIMATED BMP: " + outName);
                             return true; 
                         } else {
-                            Serial.println("[ICON] RAM fail for GIF buffers");
+                            Serial.println("[ICON] PSRAM fail for GIF buffers");
                             if(stripBuffer) free(stripBuffer);
                             if(canvasBuffer) free(canvasBuffer);
                             gif.close();
@@ -473,7 +471,7 @@ private:
             http.end();
         }
 
-        // 2. Fallback oder Standard-Pfad: PNG laden
+        // 2. Fallback: PNG laden
         String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".png";
         Serial.println("[ICON] Downloading PNG: " + id);
         
@@ -552,7 +550,8 @@ public:
     IconManager() {}
     
     void begin() {
-        gif.begin(LITTLE_ENDIAN_PIXELS); 
+        // WICHTIG: Palette auf RGB565 setzen
+        gif.begin(GIF_PALETTE_RGB565_LE); 
         
         if (!LittleFS.exists("/catalog.json")) return; 
         File f = LittleFS.open("/catalog.json", "r");
@@ -579,7 +578,7 @@ public:
         if (!LittleFS.exists("/icons")) LittleFS.mkdir("/icons");
         if (!LittleFS.exists("/iconsan")) LittleFS.mkdir("/iconsan");
     }
-
+    
     String resolveAlias(String tag) {
         if (aliasMap.count(tag)) return aliasMap[tag];
         return "";
