@@ -37,13 +37,15 @@ struct AnimatedIcon {
     unsigned long lastUsed;
 };
 
-// Context für den GIF Callback
+// Context für den GIF Callback (Erweitert um Canvas)
 struct GifConvertContext {
-    uint8_t* stripBuffer; 
-    int width;
-    int height; 
-    int totalFrames;
-    int currentFrame;
+    uint8_t* canvasBuffer; // Hält den aktuellen visuellen Zustand (RGBA)
+    int width;             // Canvas Breite
+    int height;            // Canvas Höhe
+    
+    // Status des aktuellen Frames (für Disposal Logic)
+    int dispose;           
+    int x, y, w, h;        
 };
 
 class IconManager {
@@ -295,21 +297,30 @@ private:
     static void GIFDrawCallback(GIFDRAW *pDraw) {
         GifConvertContext* ctx = (GifConvertContext*)pDraw->pUser;
         
-        int frameYOffset = ctx->currentFrame * ctx->height;
-        int destY = frameYOffset + pDraw->y; 
-        
-        if (destY >= ctx->height * ctx->totalFrames) return; 
+        // Speichere Infos für Disposal
+        ctx->dispose = pDraw->ucDisposalMethod;
+        ctx->x = pDraw->iX;
+        ctx->y = pDraw->iY;
+        ctx->w = pDraw->iWidth;
+        ctx->h = pDraw->iHeight;
 
         uint8_t *s = pDraw->pPixels;
         uint16_t *pusPalette = pDraw->pPalette;
         
-        uint8_t* d = ctx->stripBuffer + (destY * ctx->width * 4);
+        // Wir zeichnen auf den Canvas (persistenter Buffer für einen Frame)
+        uint8_t* d = ctx->canvasBuffer;
+
+        int y_abs = pDraw->iY + pDraw->y;
+        if (y_abs >= ctx->height) return;
+
+        uint32_t lineOffset = y_abs * ctx->width * 4;
 
         for (int x = 0; x < pDraw->iWidth; x++) {
-            if ((x + pDraw->iX) >= ctx->width) continue;
+            int x_abs = pDraw->iX + x;
+            if (x_abs >= ctx->width) continue;
             
             if (pDraw->ucHasTransparency && s[x] == pDraw->ucTransparent) {
-                continue;
+                continue; 
             }
 
             uint16_t c565 = pusPalette[s[x]];
@@ -317,15 +328,14 @@ private:
             uint8_t g = (c565 & 0x07E0) >> 3;
             uint8_t b = (c565 & 0x001F) << 3;
             
-            int destIdx = (pDraw->iX + x) * 4;
-            d[destIdx]   = r;
-            d[destIdx+1] = g;
-            d[destIdx+2] = b;
-            d[destIdx+3] = 255; 
+            int idx = lineOffset + (x_abs * 4);
+            d[idx]   = r;
+            d[idx+1] = g;
+            d[idx+2] = b;
+            d[idx+3] = 255; 
         }
     }
 
-    // LOGIK KORRIGIERT: forceAnim entscheidet über GIF Versuch
     bool downloadAndConvert(String id, String targetFolder, bool forceAnim) {
         if (WiFi.status() != WL_CONNECTED) return false;
 
@@ -375,23 +385,51 @@ private:
                     
                     if (frames > 0 && w > 0 && h > 0) {
                         int totalH = h * frames;
-                        size_t bufSize = w * totalH * 4;
+                        size_t stripSize = w * totalH * 4;
+                        size_t canvasSize = w * h * 4;
                         
-                        uint8_t* stripBuffer = (uint8_t*)heap_caps_malloc(bufSize, MALLOC_CAP_SPIRAM);
+                        uint8_t* stripBuffer = (uint8_t*)heap_caps_malloc(stripSize, MALLOC_CAP_SPIRAM);
+                        uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
                         
-                        if (stripBuffer) {
-                            memset(stripBuffer, 0, bufSize); 
+                        if (stripBuffer && canvasBuffer) {
+                            memset(stripBuffer, 0, stripSize); 
+                            memset(canvasBuffer, 0, canvasSize); 
                             
                             GifConvertContext ctx;
-                            ctx.stripBuffer = stripBuffer;
+                            ctx.canvasBuffer = canvasBuffer; 
                             ctx.width = w;
                             ctx.height = h;
-                            ctx.totalFrames = frames;
-                            ctx.currentFrame = 0;
+                            ctx.dispose = 0;
+                            
+                            int prevDispose = 2; 
+                            int prevX=0, prevY=0, prevW=w, prevH=h;
                             
                             for (int i=0; i<frames; i++) {
-                                ctx.currentFrame = i;
+                                // 1. Disposal des VORHERIGEN Frames anwenden
+                                if (prevDispose == 2) { 
+                                    // Restore Background
+                                    for(int dy=prevY; dy<prevY+prevH; dy++) {
+                                        if(dy >= h) break;
+                                        for(int dx=prevX; dx<prevX+prevW; dx++) {
+                                            if(dx >= w) break;
+                                            int idx = (dy * w + dx) * 4;
+                                            canvasBuffer[idx] = 0; canvasBuffer[idx+1] = 0;
+                                            canvasBuffer[idx+2] = 0; canvasBuffer[idx+3] = 0;
+                                        }
+                                    }
+                                } 
+                                
+                                // 2. Nächsten Frame malen
                                 gif.playFrame(false, NULL, &ctx); 
+                                
+                                // 3. Canvas in den Strip kopieren
+                                size_t offset = i * canvasSize;
+                                memcpy(stripBuffer + offset, canvasBuffer, canvasSize);
+
+                                prevDispose = ctx.dispose;
+                                prevX = ctx.x; prevY = ctx.y; 
+                                prevW = ctx.w; prevH = ctx.h;
+                                
                                 esp_task_wdt_reset();
                             }
                             gif.close();
@@ -416,11 +454,14 @@ private:
                             free(lineOut);
                             fOut.close();
                             free(stripBuffer);
+                            free(canvasBuffer);
                             success = true;
                             LittleFS.remove("/temp_dl.dat");
-                            return true; // GIF erfolgreich, KEIN PNG Fallback nötig
+                            return true; 
                         } else {
-                            Serial.println("[ICON] RAM fail for GIF");
+                            Serial.println("[ICON] RAM fail for GIF buffers");
+                            if(stripBuffer) free(stripBuffer);
+                            if(canvasBuffer) free(canvasBuffer);
                             gif.close();
                         }
                     } else {
@@ -433,10 +474,6 @@ private:
         }
 
         // 2. Fallback oder Standard-Pfad: PNG laden
-        // Wird ausgeführt wenn: 
-        // a) !forceAnim (Normaler {ln:} Aufruf)
-        // b) forceAnim war true, aber GIF Download/Convert schlug fehl
-        
         String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".png";
         Serial.println("[ICON] Downloading PNG: " + id);
         
@@ -567,7 +604,6 @@ public:
              bool isNumeric = true;
              for(unsigned int i=0; i<name.length(); i++) if(!isDigit(name[i])) isNumeric = false;
              if (isNumeric && name.length() > 0) {
-                 // WICHTIG: forceAnim = false
                  if (downloadAndConvert(name, "/icons/", false)) { 
                      newIcon = loadBmpFile("/icons/" + name + ".bmp");
                  } else {
@@ -606,7 +642,6 @@ public:
             for(unsigned int i=0; i<id.length(); i++) if(!isDigit(id[i])) isNumeric = false;
             
             if (isNumeric && id.length() > 0) {
-                // WICHTIG: forceAnim = true
                 if (!downloadAndConvert(id, "/iconsan/", true)) {
                     failedIcons.push_back(id);
                     return nullptr;
