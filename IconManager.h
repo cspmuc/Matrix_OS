@@ -44,6 +44,7 @@ struct GifConvertContext {
     int dispose;           
     int x, y, w, h;        
     int frameIndex; 
+    bool frameHasData;
 };
 
 class IconManager {
@@ -61,6 +62,9 @@ private:
     
     PNG png; 
     AnimatedGIF gif; 
+
+    // HIER WURDE DIE DEKLARATION EINGEFÜGT:
+    static File staticGifFile; 
 
     // --- Helper ---
     uint32_t read32(const uint8_t* data, int offset) {
@@ -277,7 +281,7 @@ private:
             int x_abs = pDraw->iX + x;
             if (x_abs >= ctx->width) continue;
             
-            // Transparente Pixel überspringen (nicht malen)
+            // Transparenz überspringen
             if (pDraw->ucHasTransparency && s[x] == pDraw->ucTransparent) continue; 
 
             uint16_t palIdx = s[x] * 3;
@@ -286,10 +290,7 @@ private:
             uint8_t b = pPalette[palIdx+2];
             
             int idx = lineOffset + (x_abs * 4);
-            d[idx] = b; 
-            d[idx+1] = g; 
-            d[idx+2] = r; 
-            d[idx+3] = 255; // Gezeichnete Pixel sind IMMER opak!
+            d[idx] = b; d[idx+1] = g; d[idx+2] = r; d[idx+3] = 255; 
         }
     }
 
@@ -359,7 +360,6 @@ private:
                                         w = gif.getCanvasWidth();
                                         h = gif.getCanvasHeight();
                                     }
-                                    Serial.printf("[GIF INFO] %dx%d, %d Frames.\n", w, h, frames);
                                     
                                     if (frames > 0 && w > 0 && h > 0) {
                                         int totalH = h * frames;
@@ -465,7 +465,8 @@ private:
                      if (rc == PNG_SUCCESS) {
                         int w = png.getWidth();
                         int h = png.getHeight();
-                        uint8_t* rgbaBuffer = (uint8_t*)malloc(w * h * 4);
+                        // --- PNG MIT PSRAM NUTZUNG ---
+                        uint8_t* rgbaBuffer = (uint8_t*)heap_caps_malloc(w * h * 4, MALLOC_CAP_SPIRAM);
                         if (rgbaBuffer) {
                             png.decode(rgbaBuffer, 0); 
                             png.close();
@@ -489,7 +490,10 @@ private:
                             free(rgbaBuffer);
                             success = true;
                             Serial.println("[ICON] Saved as BMP: " + outName);
-                        } else png.close();
+                        } else {
+                            Serial.println("[ICON] PNG OOM in PSRAM");
+                            png.close();
+                        }
                     }
                  } else if (f) f.close();
                  LittleFS.remove("/temp_dl.dat");
@@ -500,6 +504,7 @@ private:
         return success;
     }
 
+    // --- PNG Callbacks ---
     static void* myOpen(const char *filename, int32_t *size) {
         File f = LittleFS.open(filename, "r");
         if (size) *size = f.size();
@@ -522,6 +527,7 @@ public:
     IconManager() {}
     
     void begin() {
+        // Init GIF mit RGB888 für korrekte Farben
         gif.begin(GIF_PALETTE_RGB888); 
         
         if (!LittleFS.exists("/catalog.json")) return; 
@@ -612,7 +618,7 @@ public:
             for(unsigned int i=0; i<id.length(); i++) if(!isDigit(id[i])) isNumeric = false;
             
             if (isNumeric && id.length() > 0) {
-                if (!downloadAndConvert(id, "/iconsan/", true)) {
+                if (downloadAndConvert(id, "/iconsan/", true)) {
                     failedIcons.push_back(id);
                     return nullptr;
                 }
@@ -710,3 +716,5 @@ public:
         return i ? i->height : 16;
     }
 };
+
+File IconManager::staticGifFile;
