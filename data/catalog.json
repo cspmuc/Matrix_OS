@@ -5,6 +5,12 @@
       "cols": 16, 
       "rows": 64 
     }
+    "dottopng": { 
+      "file": "/dotto.png", 
+      "cols": 16, 
+      "rows": 64 
+    }
+
   },
   "icons": {
     "sun":     { "sheet": "dotto", "index": 0 },  
@@ -15,6 +21,7 @@
     "arrow_u": { "sheet": "dotto", "index": 16 },
     "arrow_d": { "sheet": "dotto", "index": 17 },
     "unknown": { "sheet": "dotto", "index": 63 } 
+    "test":    { "sheet": "dottopng", "index": 17 } 
   },
   "aliases": {
     "germany": 512,
