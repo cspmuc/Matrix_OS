@@ -37,13 +37,18 @@ struct AnimatedIcon {
     unsigned long lastUsed;
 };
 
+// Kontext für GIF Decoder
 struct GifConvertContext {
     uint8_t* canvasBuffer; 
-    int width;
-    int height; 
-    int dispose;           
-    int x, y, w, h;        
-    int frameIndex; 
+    int width, height, dispose, x, y, w, h, frameIndex; 
+};
+
+// Kontext für PNG Sheet Extraction
+struct PngExtractContext {
+    uint16_t* pixels; 
+    uint8_t* alpha;   
+    int targetX, targetY, targetW, targetH; 
+    int sheetW;
 };
 
 class IconManager {
@@ -61,8 +66,6 @@ private:
     
     PNG png; 
     AnimatedGIF gif; 
-    
-    // Temporäres File-Handle für Streaming-Operationen (falls benötigt)
     static File staticGifFile; 
 
     // --- Helper ---
@@ -103,8 +106,8 @@ private:
     }
 
     // --- Loading Logic ---
-    
-    // Lädt eine Animation vom Dateisystem in den PSRAM
+
+    // Lädt animiertes Icon (als BMP-Strip)
     AnimatedIcon* loadAnimFromFS(String filename, String name) {
         if (!LittleFS.exists(filename)) return nullptr;
         File f = LittleFS.open(filename, "r");
@@ -117,7 +120,7 @@ private:
         int32_t w = read32(header, 18);
         int32_t h = read32(header, 22);
         bool flipY = true;
-        if (h < 0) { h = -h; flipY = false; }
+        if (h < 0) { h = -h; flipY = false; } 
 
         if (w <= 0 || h <= 0) { f.close(); return nullptr; }
 
@@ -136,8 +139,6 @@ private:
         anim->lastUsed = millis();
 
         size_t numPixels = w * h;
-        
-        // Speicher zwingend im PSRAM reservieren
         anim->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         anim->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
@@ -162,22 +163,15 @@ private:
             f.read(lineBuffer, lineSize);
 
             for (int x = 0; x < w; x++) {
-                int targetIdx = y * w + x;
-                int bufIdx = x * 4;
-                
-                // Konvertierung von 32-Bit (File) zu 16-Bit (Display)
-                uint8_t b = lineBuffer[bufIdx];
-                uint8_t g = lineBuffer[bufIdx+1];
-                uint8_t r = lineBuffer[bufIdx+2];
-                uint8_t a = lineBuffer[bufIdx+3];
-                
-                anim->pixels[targetIdx] = color565(r, g, b);
-                anim->alpha[targetIdx] = a;
+                int idx = x * 4;
+                anim->pixels[y * w + x] = color565(lineBuffer[idx+2], lineBuffer[idx+1], lineBuffer[idx]);
+                anim->alpha[y * w + x] = lineBuffer[idx+3];
             }
         }
         free(lineBuffer); f.close(); return anim;
     }
 
+    // Lädt statisches BMP
     CachedIcon* loadBmpFile(String filename) {
         if (!LittleFS.exists(filename)) return nullptr;
         File f = LittleFS.open(filename, "r");
@@ -212,18 +206,125 @@ private:
             f.seek(filePos);
             f.read(lineBuffer, lineSize);
             for (int x = 0; x < width; x++) {
-                int targetIdx = y * width + x;
-                int bufIdx = x * 4;
-                newIcon->pixels[targetIdx] = color565(lineBuffer[bufIdx+2], lineBuffer[bufIdx+1], lineBuffer[bufIdx]);
-                newIcon->alpha[targetIdx] = lineBuffer[bufIdx+3];
+                int idx = x * 4;
+                newIcon->pixels[y * width + x] = color565(lineBuffer[idx+2], lineBuffer[idx+1], lineBuffer[idx]);
+                newIcon->alpha[y * width + x] = lineBuffer[idx+3];
             }
         }
         free(lineBuffer); f.close(); return newIcon;
     }
     
+    // --- NEU: PNG Sheet Loader (Stable & Compatible) ---
+    static int pngSheetDrawCallback(PNGDRAW *pDraw) {
+        PngExtractContext* ctx = (PngExtractContext*)pDraw->pUser;
+        int y = pDraw->y; 
+
+        if (y < ctx->targetY || y >= ctx->targetY + ctx->targetH) return 1; // Weiter machen
+
+        uint8_t* src = (uint8_t*)pDraw->pPixels;
+        uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
+        int pixelType = pDraw->iPixelType; 
+        
+        int rowInTile = y - ctx->targetY;
+        
+        for (int x = 0; x < pDraw->iWidth; x++) {
+            if (x < ctx->targetX || x >= ctx->targetX + ctx->targetW) continue;
+            
+            int colInTile = x - ctx->targetX;
+            int targetIndex = rowInTile * ctx->targetW + colInTile;
+            
+            uint8_t r=0, g=0, b=0, a=255;
+
+            // Palette (Indexed = 3)
+            // HINWEIS: Wir ignorieren hier komplexe Transparenz aus tRNS Chunks,
+            // um Kompatibilitätsprobleme mit älteren Libs zu vermeiden.
+            // Die meisten Icons nutzen eh Typ 6 (Truecolor Alpha).
+            if (pixelType == 3 && pPalette) { 
+                uint8_t idx = src[x];
+                r = pPalette[idx*3]; 
+                g = pPalette[idx*3+1]; 
+                b = pPalette[idx*3+2];
+            } 
+            // RGB (Truecolor = 2)
+            else if (pixelType == 2) { 
+                int idx = x * 3;
+                r = src[idx]; g = src[idx+1]; b = src[idx+2];
+            }
+            // RGBA (Truecolor Alpha = 6) - Das ist der Standard für Transparenz
+            else if (pixelType == 6) { 
+                int idx = x * 4;
+                r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
+            }
+            
+            uint16_t c565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+            
+            ctx->pixels[targetIndex] = c565;
+            ctx->alpha[targetIndex] = a;
+        }
+        return 1; // 1 = Continue
+    }
+
+    CachedIcon* loadPngIconFromSheet(const SheetDef& sheet, int index) {
+        File f = LittleFS.open(sheet.filePath, "r");
+        if (!f) return nullptr;
+
+        // Versuche zu öffnen
+        if (png.open(sheet.filePath.c_str(), myOpen, myClose, myRead, mySeek, pngSheetDrawCallback) != PNG_SUCCESS) {
+            f.close(); return nullptr;
+        }
+
+        int imgW = png.getWidth();
+        // int imgH = png.getHeight();
+        
+        // Berechne Tile Position
+        int col = index % sheet.cols;
+        int row = index / sheet.cols;
+        int tileW = sheet.tileW;
+        int tileH = sheet.tileH;
+        
+        if (tileW == 0) tileW = imgW / sheet.cols; 
+        if (tileH == 0) tileH = tileW; 
+
+        int startX = col * tileW;
+        int startY = row * tileH;
+
+        CachedIcon* newIcon = new CachedIcon();
+        newIcon->width = tileW;
+        newIcon->height = tileH;
+        newIcon->pixels = (uint16_t*)heap_caps_malloc(tileW * tileH * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+        newIcon->alpha = (uint8_t*)heap_caps_malloc(tileW * tileH * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
+
+        if (!newIcon->pixels || !newIcon->alpha) {
+            delete newIcon; png.close(); f.close(); return nullptr;
+        }
+
+        // Context vorbereiten
+        PngExtractContext ctx;
+        ctx.pixels = newIcon->pixels;
+        ctx.alpha = newIcon->alpha;
+        ctx.targetX = startX;
+        ctx.targetY = startY;
+        ctx.targetW = tileW;
+        ctx.targetH = tileH;
+        ctx.sheetW = imgW;
+
+        png.decode((void*)&ctx, 0);
+        
+        png.close();
+        f.close();
+        return newIcon;
+    }
+
     CachedIcon* loadIconFromSheet(String sheetName, int index) {
         if (sheetCatalog.find(sheetName) == sheetCatalog.end()) return nullptr;
         SheetDef& sheet = sheetCatalog[sheetName];
+        
+        // --- AUTO DETECT PNG ---
+        if (sheet.filePath.endsWith(".png") || sheet.filePath.endsWith(".PNG")) {
+            return loadPngIconFromSheet(sheet, index);
+        }
+
+        // --- BMP LOGIC ---
         if (!LittleFS.exists(sheet.filePath)) return nullptr;
         File f = LittleFS.open(sheet.filePath, "r");
         uint8_t header[54];
@@ -233,19 +334,24 @@ private:
         int32_t height = read32(header, 22);
         bool flipY = (height > 0);
         if (height < 0) height = -height;
+        
         if (sheet.tileW == 0) { sheet.tileW = width / sheet.cols; sheet.tileH = sheet.tileW; }
+        
         CachedIcon* newIcon = new CachedIcon();
         newIcon->width = sheet.tileW;
         newIcon->height = sheet.tileH;
         size_t numPixels = sheet.tileW * sheet.tileH;
         newIcon->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         newIcon->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
+        
         int col = index % sheet.cols;
         int row = index / sheet.cols;
         int startX = col * sheet.tileW;
         int startY = row * sheet.tileH; 
+        
         size_t lineSize = sheet.tileW * 4; 
         uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
+        
         for (int y = 0; y < sheet.tileH; y++) {
             int srcY_Visual = startY + y;
             int bmpRow = flipY ? (height - 1 - srcY_Visual) : srcY_Visual;
@@ -260,7 +366,24 @@ private:
         free(lineBuffer); f.close(); return newIcon;
     }
 
-    // --- GIF Callbacks (Minimal) ---
+    // --- Standard Callbacks (File I/O) ---
+    static void* myOpen(const char *filename, int32_t *size) {
+        File f = LittleFS.open(filename, "r");
+        if (f && size) *size = f.size();
+        return new File(f);
+    }
+    static void myClose(void *handle) { File* f = (File*)handle; if(f) f->close(); delete f; }
+    static int32_t myRead(PNGFILE *handle, uint8_t *buffer, int32_t length) {
+        File* f = (File*)handle->fHandle; return f->read(buffer, length);
+    }
+    static int32_t mySeek(PNGFILE *handle, int32_t position) {
+        File* f = (File*)handle->fHandle; return f->seek(position);
+    }
+    
+    // Callback für Einzel-Downloads
+    static int myDraw(PNGDRAW *pDraw) { return 0; }
+
+    // --- GIF Zeug ---
     static void* GIFOpen(const char *filename, int32_t *size) { return (void*)1; }
     static void GIFClose(void *handle) { }
     static int32_t GIFRead(GIFFILE *handle, uint8_t *buffer, int32_t length) { return 0; }
@@ -288,7 +411,7 @@ private:
             int x_abs = pDraw->iX + x;
             if (x_abs >= ctx->width) continue;
             
-            // Transparenz behandeln: Pixel überspringen
+            // Transparenz überspringen
             if (pDraw->ucHasTransparency && s[x] == pDraw->ucTransparent) continue; 
 
             uint16_t palIdx = s[x] * 3;
@@ -301,7 +424,7 @@ private:
         }
     }
 
-    // Manueller Download Loop für bessere Kontrolle
+    // --- Download Logic ---
     bool downloadFile(HTTPClient& http, File& f) {
         int len = http.getSize();
         int total = 0;
@@ -317,9 +440,8 @@ private:
                 total += c;
                 start = millis(); 
             } else { delay(10); }
-            
-            if (millis() - start > 3000) break; // 3s Timeout bei Stille
-            if (len > 0 && total >= len) break; // Fertig
+            if (millis() - start > 3000) break;
+            if (len > 0 && total >= len) break; 
             esp_task_wdt_reset();
         }
         return total > 0;
@@ -327,7 +449,6 @@ private:
 
     bool downloadAndConvert(String id, String targetFolder, bool forceAnim) {
         if (WiFi.status() != WL_CONNECTED) return false;
-
         LittleFS.remove("/temp_dl.dat");
         bool success = false;
         String outName = targetFolder + id + ".bmp";
@@ -335,202 +456,103 @@ private:
         if (forceAnim) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".gif";
             Serial.println("[ICON] Downloading GIF: " + url);
-
-            WiFiClientSecure client;
-            client.setInsecure();
-            HTTPClient http;
-            http.begin(client, url);
-            http.setUserAgent("Mozilla/5.0 (ESP32)");
-            http.setReuse(false);
-            http.setTimeout(5000); 
+            WiFiClientSecure client; client.setInsecure();
+            HTTPClient http; http.begin(client, url);
+            http.setUserAgent("Mozilla/5.0 (ESP32)"); http.setTimeout(5000); 
             
-            int httpCode = http.GET();
-            if (httpCode == HTTP_CODE_OK) {
+            if (http.GET() == HTTP_CODE_OK) {
                 File f = LittleFS.open("/temp_dl.dat", "w");
                 if (f) {
                     if (downloadFile(http, f)) {
                         f.close();
-                        // Decodierung im RAM für Stabilität
                         File fRead = LittleFS.open("/temp_dl.dat", "r");
                         size_t fSize = fRead.size();
-                        uint8_t* gifRamBuffer = nullptr;
+                        uint8_t* gifRamBuffer = (uint8_t*)malloc(fSize);
                         
-                        if (fSize > 50) {
-                            gifRamBuffer = (uint8_t*)malloc(fSize);
-                            if (gifRamBuffer) {
-                                fRead.read(gifRamBuffer, fSize);
-                                fRead.close();
-                                esp_task_wdt_reset();
-                                
-                                if (gif.open(gifRamBuffer, fSize, GIFDrawCallback)) {
-                                    GIFINFO info;
-                                    int frames = 0, w = 0, h = 0;
-                                    if (gif.getInfo(&info)) {
-                                        frames = info.iFrameCount;
-                                        w = gif.getCanvasWidth();
-                                        h = gif.getCanvasHeight();
-                                    }
+                        if (gifRamBuffer && fSize > 50) {
+                            fRead.read(gifRamBuffer, fSize); fRead.close();
+                            esp_task_wdt_reset();
+                            
+                            if (gif.open(gifRamBuffer, fSize, GIFDrawCallback)) {
+                                GIFINFO info;
+                                if (gif.getInfo(&info) && info.iFrameCount > 0) {
+                                    int w = gif.getCanvasWidth();
+                                    int h = gif.getCanvasHeight();
+                                    int frames = info.iFrameCount;
+                                    int totalH = h * frames;
+                                    size_t stripSize = w * totalH * 4;
+                                    size_t canvasSize = w * h * 4;
                                     
-                                    if (frames > 0 && w > 0 && h > 0) {
-                                        int totalH = h * frames;
-                                        size_t stripSize = w * totalH * 4;
-                                        size_t canvasSize = w * h * 4;
+                                    uint8_t* stripBuffer = (uint8_t*)heap_caps_malloc(stripSize, MALLOC_CAP_SPIRAM);
+                                    uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
+                                    
+                                    if (stripBuffer && canvasBuffer) {
+                                        memset(stripBuffer, 0, stripSize); 
+                                        memset(canvasBuffer, 0, canvasSize); 
+                                        GifConvertContext ctx = {canvasBuffer, w, h, 0, 0, 0, 0, 0}; 
+                                        int prevDispose = 2;
                                         
-                                        uint8_t* stripBuffer = (uint8_t*)heap_caps_malloc(stripSize, MALLOC_CAP_SPIRAM);
-                                        uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
-                                        
-                                        if (stripBuffer && canvasBuffer) {
-                                            // Puffer initial transparent füllen
-                                            memset(stripBuffer, 0, stripSize); 
-                                            memset(canvasBuffer, 0, canvasSize); 
-                                            
-                                            GifConvertContext ctx;
-                                            ctx.canvasBuffer = canvasBuffer; 
-                                            ctx.width = w; ctx.height = h;
-                                            ctx.dispose = 0;
-                                            
-                                            int prevDispose = 2; 
-                                            int prevX=0, prevY=0, prevW=w, prevH=h;
-                                            
-                                            for (int i=0; i<frames; i++) {
-                                                ctx.frameIndex = i;
-                                                
-                                                // Disposal Logic: Restore Background -> Transparent
-                                                if (prevDispose == 2) { 
-                                                    for(int dy=prevY; dy<prevY+prevH; dy++) {
-                                                        if(dy>=h) break;
-                                                        for(int dx=prevX; dx<prevX+prevW; dx++) {
-                                                            if(dx>=w) break;
-                                                            int idx = (dy*w + dx)*4;
-                                                            canvasBuffer[idx] = 0; 
-                                                            canvasBuffer[idx+1] = 0;
-                                                            canvasBuffer[idx+2] = 0; 
-                                                            canvasBuffer[idx+3] = 0;
-                                                        }
-                                                    }
-                                                }
-
-                                                gif.playFrame(false, NULL, &ctx); 
-                                                
-                                                size_t offset = i * canvasSize;
-                                                memcpy(stripBuffer + offset, canvasBuffer, canvasSize);
-
-                                                prevDispose = ctx.dispose;
-                                                prevX = ctx.x; prevY = ctx.y; 
-                                                prevW = ctx.w; prevH = ctx.h;
-                                                esp_task_wdt_reset();
-                                            }
-                                            gif.close();
-
-                                            // BMP Speichern
-                                            File fOut = LittleFS.open(outName, "w");
-                                            writeBmpHeader(fOut, w, totalH);
-                                            size_t lineSize = w * 4;
-                                            for (int y = totalH - 1; y >= 0; y--) {
-                                                uint8_t* srcRow = stripBuffer + (y * lineSize);
-                                                fOut.write(srcRow, lineSize);
-                                            }
-                                            fOut.close();
-                                            free(stripBuffer); free(canvasBuffer);
-                                            success = true;
-                                            Serial.println("[ICON] Processed & Saved: " + outName);
-                                        } else {
-                                            if(stripBuffer) free(stripBuffer);
-                                            if(canvasBuffer) free(canvasBuffer);
-                                            gif.close();
+                                        for (int i=0; i<frames; i++) {
+                                            ctx.frameIndex = i;
+                                            if (prevDispose == 2) memset(canvasBuffer, 0, canvasSize); 
+                                            gif.playFrame(false, NULL, &ctx); 
+                                            memcpy(stripBuffer + (i*canvasSize), canvasBuffer, canvasSize);
+                                            prevDispose = ctx.dispose;
+                                            esp_task_wdt_reset();
                                         }
-                                    } 
-                                } 
-                                if(gifRamBuffer) free(gifRamBuffer);
-                            } 
-                        } 
-                        if(fRead) fRead.close();
+                                        gif.close();
+                                        File fOut = LittleFS.open(outName, "w");
+                                        writeBmpHeader(fOut, w, totalH);
+                                        for (int y = totalH - 1; y >= 0; y--) fOut.write(stripBuffer + (y * w * 4), w * 4);
+                                        fOut.close();
+                                        free(stripBuffer); free(canvasBuffer);
+                                        success = true;
+                                        Serial.println("[ICON] GIF Converted: " + outName);
+                                    } else { if(stripBuffer) free(stripBuffer); if(canvasBuffer) free(canvasBuffer); gif.close(); }
+                                }
+                            }
+                            if(gifRamBuffer) free(gifRamBuffer);
+                        } else if(fRead) fRead.close();
                     } else { f.close(); }
                 } 
                 LittleFS.remove("/temp_dl.dat");
             } 
-            client.stop(); // Wichtig: SSL Session schließen
-            http.end();
+            client.stop(); http.end();
         }
 
-        // 2. Fallback PNG
         if (!success) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".png";
-            Serial.println("[ICON] Downloading PNG: " + id);
+            Serial.println("[ICON] Downloading PNG: " + url);
+            WiFiClientSecure client; client.setInsecure();
+            HTTPClient http; http.begin(client, url);
+            http.setUserAgent("Mozilla/5.0 (ESP32)"); http.setTimeout(3000);
             
-            WiFiClientSecure client;
-            client.setInsecure(); 
-            HTTPClient http;
-            http.begin(client, url);
-            http.setUserAgent("Mozilla/5.0 (ESP32)");
-            http.setReuse(false);
-            http.setTimeout(3000);
-            
-            int httpCode = http.GET();
-            if (httpCode == HTTP_CODE_OK) {
+            if (http.GET() == HTTP_CODE_OK) {
                  File f = LittleFS.open("/temp_dl.dat", "w");
                  if (f && downloadFile(http, f)) {
                      f.close();
                      int rc = png.open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, myDraw);
                      if (rc == PNG_SUCCESS) {
-                        int w = png.getWidth();
-                        int h = png.getHeight();
-                        // PNG Puffer ebenfalls im PSRAM
+                        int w = png.getWidth(); int h = png.getHeight();
                         uint8_t* rgbaBuffer = (uint8_t*)heap_caps_malloc(w * h * 4, MALLOC_CAP_SPIRAM);
                         if (rgbaBuffer) {
                             png.decode(rgbaBuffer, 0); 
                             png.close();
                             File fOut = LittleFS.open(outName, "w");
                             writeBmpHeader(fOut, w, h);
-                            size_t lineSize = w * 4;
-                            uint8_t* lineOut = (uint8_t*)malloc(lineSize);
-                            for (int y = h - 1; y >= 0; y--) {
-                                uint8_t* srcRow = rgbaBuffer + (y * lineSize);
-                                for(int x=0; x<w; x++) {
-                                    int i = x * 4;
-                                    lineOut[i]   = srcRow[i+2]; 
-                                    lineOut[i+1] = srcRow[i+1]; 
-                                    lineOut[i+2] = srcRow[i];   
-                                    lineOut[i+3] = srcRow[i+3]; 
-                                }
-                                fOut.write(lineOut, lineSize);
-                            }
-                            free(lineOut);
+                            for (int y = h - 1; y >= 0; y--) fOut.write(rgbaBuffer + (y * w * 4), w * 4);
                             fOut.close();
                             free(rgbaBuffer);
                             success = true;
-                            Serial.println("[ICON] Saved as BMP: " + outName);
-                        } else {
-                            Serial.println("[ICON] PNG OOM in PSRAM");
-                            png.close();
-                        }
+                            Serial.println("[ICON] PNG Saved: " + outName);
+                        } else png.close();
                     }
                  } else if (f) f.close();
                  LittleFS.remove("/temp_dl.dat");
             }
-            client.stop(); 
-            http.end();
+            client.stop(); http.end();
         }
         return success;
-    }
-
-    // --- PNG Callbacks ---
-    static void* myOpen(const char *filename, int32_t *size) {
-        File f = LittleFS.open(filename, "r");
-        if (size) *size = f.size();
-        return new File(f);
-    }
-    static void myClose(void *handle) { File* f = (File*)handle; f->close(); delete f; }
-    static int32_t myRead(PNGFILE *handle, uint8_t *buffer, int32_t length) {
-        File* f = (File*)handle->fHandle; return f->read(buffer, length);
-    }
-    static int32_t mySeek(PNGFILE *handle, int32_t position) {
-        File* f = (File*)handle->fHandle; return f->seek(position);
-    }
-    static int myDraw(PNGDRAW *pDraw) {
-        uint8_t* buffer = (uint8_t*)pDraw->pUser; 
-        memcpy(buffer + (pDraw->y * pDraw->iWidth * 4), pDraw->pPixels, pDraw->iWidth * 4);
-        return 1;
     }
 
 public:
@@ -538,7 +560,6 @@ public:
     
     void begin() {
         gif.begin(GIF_PALETTE_RGB888); 
-        
         if (!LittleFS.exists("/catalog.json")) return; 
         File f = LittleFS.open("/catalog.json", "r");
         DynamicJsonDocument* doc = new DynamicJsonDocument(8192); 
@@ -546,11 +567,10 @@ public:
 
         JsonObject sheets = (*doc)["sheets"];
         for (JsonPair kv : sheets) {
-            String key = kv.key().c_str(); JsonObject val = kv.value();
             SheetDef def; 
-            def.filePath = val["file"].as<String>(); 
-            def.cols = val["cols"] | 1; 
-            sheetCatalog[key] = def;
+            def.filePath = kv.value()["file"].as<String>(); 
+            def.cols = kv.value()["cols"] | 1; 
+            sheetCatalog[kv.key().c_str()] = def;
         }
         JsonObject icons = (*doc)["icons"];
         for (JsonPair kv : icons) {
@@ -591,9 +611,7 @@ public:
              if (isNumeric && name.length() > 0) {
                  if (downloadAndConvert(name, "/icons/", false)) { 
                      newIcon = loadBmpFile("/icons/" + name + ".bmp");
-                 } else {
-                     failedIcons.push_back(name);
-                 }
+                 } else failedIcons.push_back(name);
              } else failedIcons.push_back(name);
         }
         
@@ -611,12 +629,8 @@ public:
 
     AnimatedIcon* getAnimatedIcon(String id) {
         for (auto it = animCache.begin(); it != animCache.end(); ++it) {
-            if ((*it)->name == id) {
-                (*it)->lastUsed = millis();
-                return *it;
-            }
+            if ((*it)->name == id) { (*it)->lastUsed = millis(); return *it; }
         }
-        
         for(const String& bad : failedIcons) if (bad == id) return nullptr;
 
         AnimatedIcon* anim = nullptr;
@@ -625,17 +639,10 @@ public:
         if (!LittleFS.exists(path)) {
             bool isNumeric = true;
             for(unsigned int i=0; i<id.length(); i++) if(!isDigit(id[i])) isNumeric = false;
-            
             if (isNumeric && id.length() > 0) {
-                if (!downloadAndConvert(id, "/iconsan/", true)) {
-                    failedIcons.push_back(id);
-                    return nullptr;
-                }
-            } else {
-                return nullptr;
-            }
+                if (!downloadAndConvert(id, "/iconsan/", true)) { failedIcons.push_back(id); return nullptr; }
+            } else return nullptr;
         }
-
         anim = loadAnimFromFS(path, id);
         
         if (anim) {
@@ -644,9 +651,7 @@ public:
                 free(old->pixels); free(old->alpha); delete old;
             }
             animCache.push_front(anim);
-        } else {
-            failedIcons.push_back(id);
-        }
+        } else failedIcons.push_back(id);
         
         return anim;
     }
@@ -660,11 +665,9 @@ public:
             for (int ix = 0; ix < (doUpscale ? 16 : icon->width); ix++) {
                 int screenX = x + ix; int screenY = y + iy;
                 if (screenX < 0 || screenX >= M_WIDTH || screenY < 0 || screenY >= M_HEIGHT) continue;
-                
                 int srcX = doUpscale ? (ix/2) : ix;
                 int srcY = doUpscale ? (iy/2) : iy;
                 int i = srcY * icon->width + srcX;
-                
                 if (icon->alpha[i] > 10) display.drawPixel(screenX, screenY, icon->pixels[i]);
             }
         }
@@ -672,38 +675,25 @@ public:
 
     void drawAnimatedIcon(DisplayManager& display, int x, int y, String id) {
         AnimatedIcon* anim = getAnimatedIcon(id);
-
-        if (!anim) {
-            // Roter Punkt bei Fehler (oder Platzhalter)
-            display.drawPixel(x, y, display.color565(255, 0, 0));
-            return;
-        }
+        if (!anim) { display.drawPixel(x, y, display.color565(255, 0, 0)); return; }
 
         int frameDuration = anim->delayMs; 
         if (frameDuration < 50) frameDuration = 500; 
-        
         int totalTime = anim->frameCount * frameDuration;
         int currentFrameIdx = (millis() % totalTime) / frameDuration;
         if (currentFrameIdx >= anim->frameCount) currentFrameIdx = 0; 
 
         int pixelsPerFrame = anim->width * anim->height;
         int startPixelIdx = currentFrameIdx * pixelsPerFrame;
-
         bool doUpscale = (anim->width == 8 && anim->height == 8);
         
-        int drawW = doUpscale ? 16 : anim->width;
-        int drawH = doUpscale ? 16 : anim->height;
-
-        for (int iy = 0; iy < drawH; iy++) {
-            for (int ix = 0; ix < drawW; ix++) {
+        for (int iy = 0; iy < (doUpscale?16:anim->height); iy++) {
+            for (int ix = 0; ix < (doUpscale?16:anim->width); ix++) {
                 int screenX = x + ix; int screenY = y + iy;
                 if (screenX < 0 || screenX >= M_WIDTH || screenY < 0 || screenY >= M_HEIGHT) continue;
-                
                 int srcX = doUpscale ? (ix/2) : ix;
                 int srcY = doUpscale ? (iy/2) : iy;
-                
                 int i = startPixelIdx + (srcY * anim->width + srcX);
-
                 if (anim->alpha[i] > 10) display.drawPixel(screenX, screenY, anim->pixels[i]);
             }
         }
@@ -711,19 +701,17 @@ public:
 
     int getAnimWidth(String id) {
         AnimatedIcon* anim = getAnimatedIcon(id);
-        if (anim) {
-            return (anim->width == 8) ? 16 : anim->width; 
-        }
+        if (anim) return (anim->width == 8) ? 16 : anim->width; 
         return 16; 
     }
     
     int getIconWidth(String name) {
         CachedIcon* i = getIcon(name);
-        return i ? i->width : 16; 
+        return i ? (i->width == 8 ? 16 : i->width) : 16; 
     }
     int getIconHeight(String name) {
         CachedIcon* i = getIcon(name);
-        return i ? i->height : 16;
+        return i ? (i->height == 8 ? 16 : i->height) : 16; 
     }
 };
 
