@@ -8,7 +8,7 @@
     "dottopng": { 
       "file": "/dotto.png", 
       "cols": 16, 
-      "rows": 64 
+      "rows": 128 
     }
 
   },
