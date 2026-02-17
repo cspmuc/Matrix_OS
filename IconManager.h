@@ -44,7 +44,6 @@ struct GifConvertContext {
     int dispose;           
     int x, y, w, h;        
     int frameIndex; 
-    bool frameHasData;
 };
 
 class IconManager {
@@ -63,6 +62,7 @@ private:
     PNG png; 
     AnimatedGIF gif; 
     
+    // Temporäres File-Handle für Streaming-Operationen (falls benötigt)
     static File staticGifFile; 
 
     // --- Helper ---
@@ -102,38 +102,16 @@ private:
         return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     }
 
-    void printBufferDebug(uint8_t* buffer, int w, int h, int frameIdx) {
-        if (frameIdx > 1) return; // Nur die ersten Frames debuggen
-        Serial.printf("[DEBUG BMP] Frame %d Dump (%dx%d):\n", frameIdx, w, h);
-        for (int y = 0; y < h; y++) {
-            Serial.print("R: ");
-            for (int x = 0; x < w; x++) {
-                int idx = (y * w + x) * 4;
-                uint8_t r = buffer[idx+2]; 
-                if(r==0 && buffer[idx+1]==0 && buffer[idx]==0) Serial.print(".. ");
-                else Serial.printf("%02X ", r);
-            }
-            Serial.println();
-        }
-    }
-
     // --- Loading Logic ---
+    
+    // Lädt eine Animation vom Dateisystem in den PSRAM
     AnimatedIcon* loadAnimFromFS(String filename, String name) {
-        if (!LittleFS.exists(filename)) {
-            Serial.println("[ICON] Error: File not found " + filename);
-            return nullptr;
-        }
+        if (!LittleFS.exists(filename)) return nullptr;
         File f = LittleFS.open(filename, "r");
-        if (!f) {
-            Serial.println("[ICON] Error: Open failed " + filename);
-            return nullptr;
-        }
+        if (!f) return nullptr;
 
         uint8_t header[54];
-        if (f.read(header, 54) != 54) { 
-            Serial.println("[ICON] Error: Header read failed");
-            f.close(); return nullptr; 
-        }
+        if (f.read(header, 54) != 54) { f.close(); return nullptr; }
         
         uint32_t dataOffset = read32(header, 10);
         int32_t w = read32(header, 18);
@@ -141,10 +119,7 @@ private:
         bool flipY = true;
         if (h < 0) { h = -h; flipY = false; }
 
-        if (w <= 0 || h <= 0) { 
-            Serial.printf("[ICON] Error: Invalid dim %dx%d\n", w, h);
-            f.close(); return nullptr; 
-        }
+        if (w <= 0 || h <= 0) { f.close(); return nullptr; }
 
         int frames = 1;
         int frameH = h;
@@ -162,24 +137,19 @@ private:
 
         size_t numPixels = w * h;
         
-        // WICHTIG: Speicher im PSRAM reservieren!
+        // Speicher zwingend im PSRAM reservieren
         anim->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         anim->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
-        // Check ob Speicher bekommen
         if (!anim->pixels || !anim->alpha) { 
-            Serial.printf("[ICON] Error: OOM in loadAnimFromFS (Req: %d bytes). PSRAM full?\n", numPixels * 3);
-            if(anim->pixels) free(anim->pixels);
-            if(anim->alpha) free(anim->alpha);
-            delete anim; 
-            f.close(); 
-            return nullptr; 
+            if(anim->pixels) free(anim->pixels); 
+            if(anim->alpha) free(anim->alpha); 
+            delete anim; f.close(); return nullptr; 
         }
 
         size_t lineSize = w * 4;
         uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
         if (!lineBuffer) { 
-            Serial.println("[ICON] Error: LineBuffer malloc fail");
             free(anim->pixels); free(anim->alpha); delete anim; f.close(); return nullptr; 
         }
 
@@ -188,23 +158,24 @@ private:
             int srcY_Visual = y;
             int bmpRow = flipY ? (h - 1 - srcY_Visual) : srcY_Visual;
             size_t filePos = dataOffset + ((size_t)bmpRow * w * 4);
-            
             f.seek(filePos);
             f.read(lineBuffer, lineSize);
 
             for (int x = 0; x < w; x++) {
                 int targetIdx = y * w + x;
                 int bufIdx = x * 4;
-                // BGR zu RGB565 konvertieren
-                anim->pixels[targetIdx] = color565(lineBuffer[bufIdx+2], lineBuffer[bufIdx+1], lineBuffer[bufIdx]);
-                anim->alpha[targetIdx] = lineBuffer[bufIdx+3];
+                
+                // Konvertierung von 32-Bit (File) zu 16-Bit (Display)
+                uint8_t b = lineBuffer[bufIdx];
+                uint8_t g = lineBuffer[bufIdx+1];
+                uint8_t r = lineBuffer[bufIdx+2];
+                uint8_t a = lineBuffer[bufIdx+3];
+                
+                anim->pixels[targetIdx] = color565(r, g, b);
+                anim->alpha[targetIdx] = a;
             }
         }
-        free(lineBuffer);
-        f.close();
-        
-        // Serial.printf("[ICON] Successfully loaded %s into PSRAM\n", name.c_str());
-        return anim;
+        free(lineBuffer); f.close(); return anim;
     }
 
     CachedIcon* loadBmpFile(String filename) {
@@ -289,7 +260,7 @@ private:
         free(lineBuffer); f.close(); return newIcon;
     }
 
-    // --- GIF Callbacks ---
+    // --- GIF Callbacks (Minimal) ---
     static void* GIFOpen(const char *filename, int32_t *size) { return (void*)1; }
     static void GIFClose(void *handle) { }
     static int32_t GIFRead(GIFFILE *handle, uint8_t *buffer, int32_t length) { return 0; }
@@ -302,8 +273,6 @@ private:
         ctx->y = pDraw->iY;
         ctx->w = pDraw->iWidth;
         ctx->h = pDraw->iHeight;
-        
-        ctx->frameHasData = true;
 
         uint8_t *s = pDraw->pPixels;
         uint8_t *pPalette = (uint8_t*)pDraw->pPalette;
@@ -319,6 +288,7 @@ private:
             int x_abs = pDraw->iX + x;
             if (x_abs >= ctx->width) continue;
             
+            // Transparenz behandeln: Pixel überspringen
             if (pDraw->ucHasTransparency && s[x] == pDraw->ucTransparent) continue; 
 
             uint16_t palIdx = s[x] * 3;
@@ -331,6 +301,7 @@ private:
         }
     }
 
+    // Manueller Download Loop für bessere Kontrolle
     bool downloadFile(HTTPClient& http, File& f) {
         int len = http.getSize();
         int total = 0;
@@ -347,8 +318,8 @@ private:
                 start = millis(); 
             } else { delay(10); }
             
-            if (millis() - start > 3000) break;
-            if (len > 0 && total >= len) break;
+            if (millis() - start > 3000) break; // 3s Timeout bei Stille
+            if (len > 0 && total >= len) break; // Fertig
             esp_task_wdt_reset();
         }
         return total > 0;
@@ -363,7 +334,7 @@ private:
 
         if (forceAnim) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".gif";
-            Serial.println("[ICON] Trying GIF download: " + url);
+            Serial.println("[ICON] Downloading GIF: " + url);
 
             WiFiClientSecure client;
             client.setInsecure();
@@ -379,6 +350,7 @@ private:
                 if (f) {
                     if (downloadFile(http, f)) {
                         f.close();
+                        // Decodierung im RAM für Stabilität
                         File fRead = LittleFS.open("/temp_dl.dat", "r");
                         size_t fSize = fRead.size();
                         uint8_t* gifRamBuffer = nullptr;
@@ -408,7 +380,7 @@ private:
                                         uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
                                         
                                         if (stripBuffer && canvasBuffer) {
-                                            // FIX: Transparent init
+                                            // Puffer initial transparent füllen
                                             memset(stripBuffer, 0, stripSize); 
                                             memset(canvasBuffer, 0, canvasSize); 
                                             
@@ -423,8 +395,8 @@ private:
                                             for (int i=0; i<frames; i++) {
                                                 ctx.frameIndex = i;
                                                 
+                                                // Disposal Logic: Restore Background -> Transparent
                                                 if (prevDispose == 2) { 
-                                                    // FIX: Löschen auf TRANSPARENT (0)
                                                     for(int dy=prevY; dy<prevY+prevH; dy++) {
                                                         if(dy>=h) break;
                                                         for(int dx=prevX; dx<prevX+prevW; dx++) {
@@ -450,6 +422,7 @@ private:
                                             }
                                             gif.close();
 
+                                            // BMP Speichern
                                             File fOut = LittleFS.open(outName, "w");
                                             writeBmpHeader(fOut, w, totalH);
                                             size_t lineSize = w * 4;
@@ -460,7 +433,7 @@ private:
                                             fOut.close();
                                             free(stripBuffer); free(canvasBuffer);
                                             success = true;
-                                            Serial.println("[ICON] Saved ANIMATED BMP: " + outName);
+                                            Serial.println("[ICON] Processed & Saved: " + outName);
                                         } else {
                                             if(stripBuffer) free(stripBuffer);
                                             if(canvasBuffer) free(canvasBuffer);
@@ -476,7 +449,7 @@ private:
                 } 
                 LittleFS.remove("/temp_dl.dat");
             } 
-            client.stop(); 
+            client.stop(); // Wichtig: SSL Session schließen
             http.end();
         }
 
@@ -502,7 +475,7 @@ private:
                      if (rc == PNG_SUCCESS) {
                         int w = png.getWidth();
                         int h = png.getHeight();
-                        // PNG Buffer auch in PSRAM
+                        // PNG Puffer ebenfalls im PSRAM
                         uint8_t* rgbaBuffer = (uint8_t*)heap_caps_malloc(w * h * 4, MALLOC_CAP_SPIRAM);
                         if (rgbaBuffer) {
                             png.decode(rgbaBuffer, 0); 
