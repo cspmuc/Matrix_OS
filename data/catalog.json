@@ -21,6 +21,7 @@
     "arrow_u": { "sheet": "dotto", "index": 16 },
     "arrow_d": { "sheet": "dotto", "index": 17 },
     "unknown": { "sheet": "dotto", "index": 63 },
+    "kiss":    { "sheet": "dottopng", "index": 272 },
     "test":    { "sheet": "dottopng", "index": 17 } 
   },
   "aliases": {

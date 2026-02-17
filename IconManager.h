@@ -14,7 +14,14 @@
 #include <esp_task_wdt.h> 
 
 struct IconDef { String sheetName; int index; };
-struct SheetDef { String filePath; int cols; int tileW; int tileH; };
+// WICHTIG: Konstruktor hinzugefügt, damit Werte immer sauber null sind!
+struct SheetDef { 
+    String filePath; 
+    int cols; 
+    int tileW; 
+    int tileH; 
+    SheetDef() : cols(1), tileW(0), tileH(0) {} 
+};
 
 struct CachedIcon { 
     String name; 
@@ -235,56 +242,44 @@ private:
             
             uint8_t r=0, g=0, b=0, a=255;
 
-            // Palette (Indexed = 3)
-            // HINWEIS: Wir ignorieren hier komplexe Transparenz aus tRNS Chunks,
-            // um Kompatibilitätsprobleme mit älteren Libs zu vermeiden.
-            // Die meisten Icons nutzen eh Typ 6 (Truecolor Alpha).
-            if (pixelType == 3 && pPalette) { 
+            if (pixelType == 3 && pPalette) { // Palette
                 uint8_t idx = src[x];
-                r = pPalette[idx*3]; 
-                g = pPalette[idx*3+1]; 
-                b = pPalette[idx*3+2];
+                r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2];
             } 
-            // RGB (Truecolor = 2)
-            else if (pixelType == 2) { 
+            else if (pixelType == 2) { // RGB
                 int idx = x * 3;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2];
             }
-            // RGBA (Truecolor Alpha = 6) - Das ist der Standard für Transparenz
-            else if (pixelType == 6) { 
+            else if (pixelType == 6) { // RGBA
                 int idx = x * 4;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
             }
             
             uint16_t c565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-            
             ctx->pixels[targetIndex] = c565;
             ctx->alpha[targetIndex] = a;
         }
-        return 1; // 1 = Continue
+        return 1;
     }
 
     CachedIcon* loadPngIconFromSheet(const SheetDef& sheet, int index) {
         File f = LittleFS.open(sheet.filePath, "r");
         if (!f) return nullptr;
 
-        // Versuche zu öffnen
         if (png.open(sheet.filePath.c_str(), myOpen, myClose, myRead, mySeek, pngSheetDrawCallback) != PNG_SUCCESS) {
             f.close(); return nullptr;
         }
 
         int imgW = png.getWidth();
-        // int imgH = png.getHeight();
-        
-        // Berechne Tile Position
-        int col = index % sheet.cols;
-        int row = index / sheet.cols;
-        int tileW = sheet.tileW;
-        int tileH = sheet.tileH;
-        
-        if (tileW == 0) tileW = imgW / sheet.cols; 
-        if (tileH == 0) tileH = tileW; 
+        // Fallback wenn im SheetDef nichts definiert war (weil JSON nicht gelesen oder Init gefehlt hat)
+        int cols = (sheet.cols > 0) ? sheet.cols : 1;
+        int tileW = (sheet.tileW > 0) ? sheet.tileW : (imgW / cols);
+        int tileH = (sheet.tileH > 0) ? sheet.tileH : tileW; // Fallback auf Quadratisch
 
+        // Berechne Tile Position
+        int col = index % cols;
+        int row = index / cols;
+        
         int startX = col * tileW;
         int startY = row * tileH;
 
@@ -298,7 +293,6 @@ private:
             delete newIcon; png.close(); f.close(); return nullptr;
         }
 
-        // Context vorbereiten
         PngExtractContext ctx;
         ctx.pixels = newIcon->pixels;
         ctx.alpha = newIcon->alpha;
@@ -309,7 +303,6 @@ private:
         ctx.sheetW = imgW;
 
         png.decode((void*)&ctx, 0);
-        
         png.close();
         f.close();
         return newIcon;
@@ -335,32 +328,34 @@ private:
         bool flipY = (height > 0);
         if (height < 0) height = -height;
         
-        if (sheet.tileW == 0) { sheet.tileW = width / sheet.cols; sheet.tileH = sheet.tileW; }
+        // Safety Fallback für BMP
+        int tileW = (sheet.tileW > 0) ? sheet.tileW : (width / sheet.cols);
+        int tileH = (sheet.tileH > 0) ? sheet.tileH : tileW;
         
         CachedIcon* newIcon = new CachedIcon();
-        newIcon->width = sheet.tileW;
-        newIcon->height = sheet.tileH;
-        size_t numPixels = sheet.tileW * sheet.tileH;
+        newIcon->width = tileW;
+        newIcon->height = tileH;
+        size_t numPixels = tileW * tileH;
         newIcon->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         newIcon->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
         
         int col = index % sheet.cols;
         int row = index / sheet.cols;
-        int startX = col * sheet.tileW;
-        int startY = row * sheet.tileH; 
+        int startX = col * tileW;
+        int startY = row * tileH; 
         
-        size_t lineSize = sheet.tileW * 4; 
+        size_t lineSize = tileW * 4; 
         uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
         
-        for (int y = 0; y < sheet.tileH; y++) {
+        for (int y = 0; y < tileH; y++) {
             int srcY_Visual = startY + y;
             int bmpRow = flipY ? (height - 1 - srcY_Visual) : srcY_Visual;
             size_t filePos = dataOffset + ((size_t)bmpRow * width * 4) + ((size_t)startX * 4);
             f.seek(filePos);
             f.read(lineBuffer, lineSize); 
-            for (int x = 0; x < sheet.tileW; x++) {
-                newIcon->pixels[y * sheet.tileW + x] = color565(lineBuffer[x*4+2], lineBuffer[x*4+1], lineBuffer[x*4]);
-                newIcon->alpha[y * sheet.tileW + x] = lineBuffer[x*4+3];
+            for (int x = 0; x < tileW; x++) {
+                newIcon->pixels[y * tileW + x] = color565(lineBuffer[x*4+2], lineBuffer[x*4+1], lineBuffer[x*4]);
+                newIcon->alpha[y * tileW + x] = lineBuffer[x*4+3];
             }
         }
         free(lineBuffer); f.close(); return newIcon;
@@ -379,11 +374,9 @@ private:
     static int32_t mySeek(PNGFILE *handle, int32_t position) {
         File* f = (File*)handle->fHandle; return f->seek(position);
     }
-    
-    // Callback für Einzel-Downloads
     static int myDraw(PNGDRAW *pDraw) { return 0; }
 
-    // --- GIF Zeug ---
+    // --- GIF Zeug (Bleibt gleich) ---
     static void* GIFOpen(const char *filename, int32_t *size) { return (void*)1; }
     static void GIFClose(void *handle) { }
     static int32_t GIFRead(GIFFILE *handle, uint8_t *buffer, int32_t length) { return 0; }
@@ -411,7 +404,6 @@ private:
             int x_abs = pDraw->iX + x;
             if (x_abs >= ctx->width) continue;
             
-            // Transparenz überspringen
             if (pDraw->ucHasTransparency && s[x] == pDraw->ucTransparent) continue; 
 
             uint16_t palIdx = s[x] * 3;
@@ -567,9 +559,18 @@ public:
 
         JsonObject sheets = (*doc)["sheets"];
         for (JsonPair kv : sheets) {
+            // FIX: Saubere Initialisierung der SheetDef
             SheetDef def; 
             def.filePath = kv.value()["file"].as<String>(); 
             def.cols = kv.value()["cols"] | 1; 
+            
+            // Tile-Größe initial auf 0 setzen, damit sie später berechnet wird!
+            def.tileW = 0;
+            def.tileH = 0;
+            
+            // Optional: Wenn rows/cols im JSON steht, könnte man es auch lesen, 
+            // aber die Berechnung aus der Bildbreite (in loadIconFromSheet) ist sicherer.
+            
             sheetCatalog[kv.key().c_str()] = def;
         }
         JsonObject icons = (*doc)["icons"];
