@@ -62,8 +62,7 @@ private:
     
     PNG png; 
     AnimatedGIF gif; 
-
-    // HIER WURDE DIE DEKLARATION EINGEFÜGT:
+    
     static File staticGifFile; 
 
     // --- Helper ---
@@ -103,14 +102,38 @@ private:
         return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     }
 
+    void printBufferDebug(uint8_t* buffer, int w, int h, int frameIdx) {
+        if (frameIdx > 1) return; // Nur die ersten Frames debuggen
+        Serial.printf("[DEBUG BMP] Frame %d Dump (%dx%d):\n", frameIdx, w, h);
+        for (int y = 0; y < h; y++) {
+            Serial.print("R: ");
+            for (int x = 0; x < w; x++) {
+                int idx = (y * w + x) * 4;
+                uint8_t r = buffer[idx+2]; 
+                if(r==0 && buffer[idx+1]==0 && buffer[idx]==0) Serial.print(".. ");
+                else Serial.printf("%02X ", r);
+            }
+            Serial.println();
+        }
+    }
+
     // --- Loading Logic ---
     AnimatedIcon* loadAnimFromFS(String filename, String name) {
-        if (!LittleFS.exists(filename)) return nullptr;
+        if (!LittleFS.exists(filename)) {
+            Serial.println("[ICON] Error: File not found " + filename);
+            return nullptr;
+        }
         File f = LittleFS.open(filename, "r");
-        if (!f) return nullptr;
+        if (!f) {
+            Serial.println("[ICON] Error: Open failed " + filename);
+            return nullptr;
+        }
 
         uint8_t header[54];
-        if (f.read(header, 54) != 54) { f.close(); return nullptr; }
+        if (f.read(header, 54) != 54) { 
+            Serial.println("[ICON] Error: Header read failed");
+            f.close(); return nullptr; 
+        }
         
         uint32_t dataOffset = read32(header, 10);
         int32_t w = read32(header, 18);
@@ -118,7 +141,10 @@ private:
         bool flipY = true;
         if (h < 0) { h = -h; flipY = false; }
 
-        if (w <= 0 || h <= 0) { f.close(); return nullptr; }
+        if (w <= 0 || h <= 0) { 
+            Serial.printf("[ICON] Error: Invalid dim %dx%d\n", w, h);
+            f.close(); return nullptr; 
+        }
 
         int frames = 1;
         int frameH = h;
@@ -135,18 +161,25 @@ private:
         anim->lastUsed = millis();
 
         size_t numPixels = w * h;
+        
+        // WICHTIG: Speicher im PSRAM reservieren!
         anim->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         anim->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
+        // Check ob Speicher bekommen
         if (!anim->pixels || !anim->alpha) { 
+            Serial.printf("[ICON] Error: OOM in loadAnimFromFS (Req: %d bytes). PSRAM full?\n", numPixels * 3);
             if(anim->pixels) free(anim->pixels);
             if(anim->alpha) free(anim->alpha);
-            delete anim; f.close(); return nullptr; 
+            delete anim; 
+            f.close(); 
+            return nullptr; 
         }
 
         size_t lineSize = w * 4;
         uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
         if (!lineBuffer) { 
+            Serial.println("[ICON] Error: LineBuffer malloc fail");
             free(anim->pixels); free(anim->alpha); delete anim; f.close(); return nullptr; 
         }
 
@@ -155,21 +188,23 @@ private:
             int srcY_Visual = y;
             int bmpRow = flipY ? (h - 1 - srcY_Visual) : srcY_Visual;
             size_t filePos = dataOffset + ((size_t)bmpRow * w * 4);
+            
             f.seek(filePos);
             f.read(lineBuffer, lineSize);
 
             for (int x = 0; x < w; x++) {
                 int targetIdx = y * w + x;
                 int bufIdx = x * 4;
-                uint8_t b = lineBuffer[bufIdx];
-                uint8_t g = lineBuffer[bufIdx+1];
-                uint8_t r = lineBuffer[bufIdx+2];
-                uint8_t a = lineBuffer[bufIdx+3];
-                anim->pixels[targetIdx] = color565(r, g, b);
-                anim->alpha[targetIdx] = a;
+                // BGR zu RGB565 konvertieren
+                anim->pixels[targetIdx] = color565(lineBuffer[bufIdx+2], lineBuffer[bufIdx+1], lineBuffer[bufIdx]);
+                anim->alpha[targetIdx] = lineBuffer[bufIdx+3];
             }
         }
-        free(lineBuffer); f.close(); return anim;
+        free(lineBuffer);
+        f.close();
+        
+        // Serial.printf("[ICON] Successfully loaded %s into PSRAM\n", name.c_str());
+        return anim;
     }
 
     CachedIcon* loadBmpFile(String filename) {
@@ -188,6 +223,7 @@ private:
         newIcon->width = width;
         newIcon->height = height;
         size_t numPixels = width * height;
+        
         newIcon->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         newIcon->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
@@ -266,6 +302,8 @@ private:
         ctx->y = pDraw->iY;
         ctx->w = pDraw->iWidth;
         ctx->h = pDraw->iHeight;
+        
+        ctx->frameHasData = true;
 
         uint8_t *s = pDraw->pPixels;
         uint8_t *pPalette = (uint8_t*)pDraw->pPalette;
@@ -281,7 +319,6 @@ private:
             int x_abs = pDraw->iX + x;
             if (x_abs >= ctx->width) continue;
             
-            // Transparenz überspringen
             if (pDraw->ucHasTransparency && s[x] == pDraw->ucTransparent) continue; 
 
             uint16_t palIdx = s[x] * 3;
@@ -309,6 +346,7 @@ private:
                 total += c;
                 start = millis(); 
             } else { delay(10); }
+            
             if (millis() - start > 3000) break;
             if (len > 0 && total >= len) break;
             esp_task_wdt_reset();
@@ -370,7 +408,7 @@ private:
                                         uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
                                         
                                         if (stripBuffer && canvasBuffer) {
-                                            // FIX 1: Puffer initial mit TRANSPARENT füllen (0,0,0,0)
+                                            // FIX: Transparent init
                                             memset(stripBuffer, 0, stripSize); 
                                             memset(canvasBuffer, 0, canvasSize); 
                                             
@@ -385,9 +423,8 @@ private:
                                             for (int i=0; i<frames; i++) {
                                                 ctx.frameIndex = i;
                                                 
-                                                // --- DISPOSAL LOGIC ---
                                                 if (prevDispose == 2) { 
-                                                    // FIX 2: Lösche auf TRANSPARENT (0)
+                                                    // FIX: Löschen auf TRANSPARENT (0)
                                                     for(int dy=prevY; dy<prevY+prevH; dy++) {
                                                         if(dy>=h) break;
                                                         for(int dx=prevX; dx<prevX+prevW; dx++) {
@@ -396,7 +433,7 @@ private:
                                                             canvasBuffer[idx] = 0; 
                                                             canvasBuffer[idx+1] = 0;
                                                             canvasBuffer[idx+2] = 0; 
-                                                            canvasBuffer[idx+3] = 0; // Transparent!
+                                                            canvasBuffer[idx+3] = 0;
                                                         }
                                                     }
                                                 }
@@ -465,7 +502,7 @@ private:
                      if (rc == PNG_SUCCESS) {
                         int w = png.getWidth();
                         int h = png.getHeight();
-                        // --- PNG MIT PSRAM NUTZUNG ---
+                        // PNG Buffer auch in PSRAM
                         uint8_t* rgbaBuffer = (uint8_t*)heap_caps_malloc(w * h * 4, MALLOC_CAP_SPIRAM);
                         if (rgbaBuffer) {
                             png.decode(rgbaBuffer, 0); 
@@ -527,7 +564,6 @@ public:
     IconManager() {}
     
     void begin() {
-        // Init GIF mit RGB888 für korrekte Farben
         gif.begin(GIF_PALETTE_RGB888); 
         
         if (!LittleFS.exists("/catalog.json")) return; 
@@ -618,7 +654,7 @@ public:
             for(unsigned int i=0; i<id.length(); i++) if(!isDigit(id[i])) isNumeric = false;
             
             if (isNumeric && id.length() > 0) {
-                if (downloadAndConvert(id, "/iconsan/", true)) {
+                if (!downloadAndConvert(id, "/iconsan/", true)) {
                     failedIcons.push_back(id);
                     return nullptr;
                 }
@@ -665,6 +701,7 @@ public:
         AnimatedIcon* anim = getAnimatedIcon(id);
 
         if (!anim) {
+            // Roter Punkt bei Fehler (oder Platzhalter)
             display.drawPixel(x, y, display.color565(255, 0, 0));
             return;
         }
