@@ -14,7 +14,6 @@
 #include <esp_task_wdt.h> 
 
 struct IconDef { String sheetName; int index; };
-// WICHTIG: Konstruktor hinzugefügt, damit Werte immer sauber null sind!
 struct SheetDef { 
     String filePath; 
     int cols; 
@@ -44,18 +43,26 @@ struct AnimatedIcon {
     unsigned long lastUsed;
 };
 
-// Kontext für GIF Decoder
+// --- Context Strukturen ---
 struct GifConvertContext {
     uint8_t* canvasBuffer; 
     int width, height, dispose, x, y, w, h, frameIndex; 
 };
 
-// Kontext für PNG Sheet Extraction
 struct PngExtractContext {
-    uint16_t* pixels; 
-    uint8_t* alpha;   
+    uint16_t* pixels; // Zielbuffer 565
+    uint8_t* alpha;   // Zielbuffer Alpha
     int targetX, targetY, targetW, targetH; 
     int sheetW;
+    // Transparenz Infos
+    bool hasTransColor;
+    uint32_t transColor; // Geändert auf uint32_t für RGB Support
+};
+
+struct PngDownloadContext {
+    File* fOut;
+    int w;
+    uint8_t* lineBuffer; 
 };
 
 class IconManager {
@@ -114,7 +121,6 @@ private:
 
     // --- Loading Logic ---
 
-    // Lädt animiertes Icon (als BMP-Strip)
     AnimatedIcon* loadAnimFromFS(String filename, String name) {
         if (!LittleFS.exists(filename)) return nullptr;
         File f = LittleFS.open(filename, "r");
@@ -178,7 +184,6 @@ private:
         free(lineBuffer); f.close(); return anim;
     }
 
-    // Lädt statisches BMP
     CachedIcon* loadBmpFile(String filename) {
         if (!LittleFS.exists(filename)) return nullptr;
         File f = LittleFS.open(filename, "r");
@@ -221,12 +226,12 @@ private:
         free(lineBuffer); f.close(); return newIcon;
     }
     
-    // --- NEU: PNG Sheet Loader (Stable & Compatible) ---
+    // --- PNG Sheet Loader ---
     static int pngSheetDrawCallback(PNGDRAW *pDraw) {
         PngExtractContext* ctx = (PngExtractContext*)pDraw->pUser;
         int y = pDraw->y; 
 
-        if (y < ctx->targetY || y >= ctx->targetY + ctx->targetH) return 1; // Weiter machen
+        if (y < ctx->targetY || y >= ctx->targetY + ctx->targetH) return 1;
 
         uint8_t* src = (uint8_t*)pDraw->pPixels;
         uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
@@ -242,21 +247,33 @@ private:
             
             uint8_t r=0, g=0, b=0, a=255;
 
-            if (pixelType == 3 && pPalette) { // Palette
+            // Type 3: Palette (Indexiert)
+            if (pixelType == 3 && pPalette) { 
                 uint8_t idx = src[x];
-                r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2];
+                // FIX: Transparenzprüfung mit korrekter Methode
+                if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { 
+                    a = 0; 
+                } else {
+                    r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2];
+                }
             } 
-            else if (pixelType == 2) { // RGB
+            // Type 2: RGB (Truecolor)
+            else if (pixelType == 2) { 
                 int idx = x * 3;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2];
+                // FIX: Prüfen auf transparenten "Key Color" (oft Magenta oder ähnlich)
+                if (ctx->hasTransColor) {
+                    uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+                    if(rgb == ctx->transColor) a = 0;
+                }
             }
-            else if (pixelType == 6) { // RGBA
+            // Type 6: RGBA (Truecolor Alpha) - Hier ist Alpha direkt im Bild
+            else if (pixelType == 6) { 
                 int idx = x * 4;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
             }
             
-            uint16_t c565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-            ctx->pixels[targetIndex] = c565;
+            ctx->pixels[targetIndex] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
             ctx->alpha[targetIndex] = a;
         }
         return 1;
@@ -271,15 +288,13 @@ private:
         }
 
         int imgW = png.getWidth();
-        // Fallback wenn im SheetDef nichts definiert war (weil JSON nicht gelesen oder Init gefehlt hat)
+        
         int cols = (sheet.cols > 0) ? sheet.cols : 1;
         int tileW = (sheet.tileW > 0) ? sheet.tileW : (imgW / cols);
-        int tileH = (sheet.tileH > 0) ? sheet.tileH : tileW; // Fallback auf Quadratisch
+        int tileH = (sheet.tileH > 0) ? sheet.tileH : tileW; 
 
-        // Berechne Tile Position
         int col = index % cols;
         int row = index / cols;
-        
         int startX = col * tileW;
         int startY = row * tileH;
 
@@ -301,6 +316,14 @@ private:
         ctx.targetW = tileW;
         ctx.targetH = tileH;
         ctx.sheetW = imgW;
+        
+        // FIX: Transparenz jetzt aktiviert mit getTransparentColor()
+        ctx.hasTransColor = false;
+        int transColor = png.getTransparentColor(); // Gibt -1 wenn keine, sonst Farbwert/Index
+        if(transColor != -1) { 
+            ctx.hasTransColor = true; 
+            ctx.transColor = (uint32_t)transColor; 
+        }
 
         png.decode((void*)&ctx, 0);
         png.close();
@@ -312,12 +335,11 @@ private:
         if (sheetCatalog.find(sheetName) == sheetCatalog.end()) return nullptr;
         SheetDef& sheet = sheetCatalog[sheetName];
         
-        // --- AUTO DETECT PNG ---
         if (sheet.filePath.endsWith(".png") || sheet.filePath.endsWith(".PNG")) {
             return loadPngIconFromSheet(sheet, index);
         }
 
-        // --- BMP LOGIC ---
+        // BMP Logic
         if (!LittleFS.exists(sheet.filePath)) return nullptr;
         File f = LittleFS.open(sheet.filePath, "r");
         uint8_t header[54];
@@ -328,7 +350,6 @@ private:
         bool flipY = (height > 0);
         if (height < 0) height = -height;
         
-        // Safety Fallback für BMP
         int tileW = (sheet.tileW > 0) ? sheet.tileW : (width / sheet.cols);
         int tileH = (sheet.tileH > 0) ? sheet.tileH : tileW;
         
@@ -374,9 +395,45 @@ private:
     static int32_t mySeek(PNGFILE *handle, int32_t position) {
         File* f = (File*)handle->fHandle; return f->seek(position);
     }
-    static int myDraw(PNGDRAW *pDraw) { return 0; }
+    
+    // Callback für Download (PNG -> BMP Konvertierung)
+    static int pngDownloadDraw(PNGDRAW *pDraw) {
+        PngDownloadContext* ctx = (PngDownloadContext*)pDraw->pUser;
+        uint8_t* src = (uint8_t*)pDraw->pPixels;
+        uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
+        int pixelType = pDraw->iPixelType; 
+        
+        for (int x = 0; x < pDraw->iWidth; x++) {
+            uint8_t r=0, g=0, b=0, a=255;
 
-    // --- GIF Zeug (Bleibt gleich) ---
+            if (pixelType == 3 && pPalette) { // Palette
+                uint8_t idx = src[x];
+                // Einfache Transparenzannahme für Download (oft Index 0)
+                // oder besser: Wenn getTransparentColor hier verfügbar wäre.
+                // Da Download meist Einzelbilder sind, ist RGBA am sichersten.
+                r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2];
+            } 
+            else if (pixelType == 2) { // RGB
+                int idx = x * 3;
+                r = src[idx]; g = src[idx+1]; b = src[idx+2];
+            }
+            else if (pixelType == 6) { // RGBA
+                int idx = x * 4;
+                r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
+            }
+            
+            // Speichern als BGR + A (für BMP)
+            int targetIdx = x * 4;
+            ctx->lineBuffer[targetIdx]   = b;
+            ctx->lineBuffer[targetIdx+1] = g;
+            ctx->lineBuffer[targetIdx+2] = r;
+            ctx->lineBuffer[targetIdx+3] = a;
+        }
+        ctx->fOut->write(ctx->lineBuffer, ctx->w * 4);
+        return 1;
+    }
+
+    // --- GIF Zeug ---
     static void* GIFOpen(const char *filename, int32_t *size) { return (void*)1; }
     static void GIFClose(void *handle) { }
     static int32_t GIFRead(GIFFILE *handle, uint8_t *buffer, int32_t length) { return 0; }
@@ -523,22 +580,41 @@ private:
                  File f = LittleFS.open("/temp_dl.dat", "w");
                  if (f && downloadFile(http, f)) {
                      f.close();
-                     int rc = png.open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, myDraw);
-                     if (rc == PNG_SUCCESS) {
-                        int w = png.getWidth(); int h = png.getHeight();
-                        uint8_t* rgbaBuffer = (uint8_t*)heap_caps_malloc(w * h * 4, MALLOC_CAP_SPIRAM);
-                        if (rgbaBuffer) {
-                            png.decode(rgbaBuffer, 0); 
-                            png.close();
-                            File fOut = LittleFS.open(outName, "w");
-                            writeBmpHeader(fOut, w, h);
-                            for (int y = h - 1; y >= 0; y--) fOut.write(rgbaBuffer + (y * w * 4), w * 4);
-                            fOut.close();
-                            free(rgbaBuffer);
-                            success = true;
-                            Serial.println("[ICON] PNG Saved: " + outName);
-                        } else png.close();
-                    }
+                     
+                     // FIX: PNG Download nutzt jetzt eigene Logik (pngDownloadDraw)
+                     PngDownloadContext ctx;
+                     File fOut = LittleFS.open(outName, "w");
+                     if(fOut) {
+                         ctx.fOut = &fOut;
+                         if (png.open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, pngDownloadDraw) == PNG_SUCCESS) {
+                             ctx.w = png.getWidth();
+                             int h = png.getHeight();
+                             uint8_t header[54] = {0};
+                             header[0] = 'B'; header[1] = 'M';
+                             uint32_t dataSize = ctx.w * h * 4;
+                             write32(header, 2, dataSize + 54);
+                             write32(header, 10, 54);
+                             write32(header, 14, 40);
+                             write32(header, 18, ctx.w);
+                             // Top-Down speichern (negative Höhe) für Downloaded Images
+                             uint32_t negH = (uint32_t)(-h); 
+                             write32(header, 22, negH); 
+                             write16(header, 26, 1);
+                             write16(header, 28, 32); 
+                             fOut.write(header, 54);
+                             
+                             ctx.lineBuffer = (uint8_t*)malloc(ctx.w * 4);
+                             if (ctx.lineBuffer) {
+                                 png.decode((void*)&ctx, 0); 
+                                 free(ctx.lineBuffer);
+                                 success = true;
+                                 Serial.println("[ICON] PNG Saved: " + outName);
+                             }
+                             png.close();
+                         }
+                         fOut.close();
+                         if(!success) LittleFS.remove(outName); 
+                     }
                  } else if (f) f.close();
                  LittleFS.remove("/temp_dl.dat");
             }
@@ -559,18 +635,10 @@ public:
 
         JsonObject sheets = (*doc)["sheets"];
         for (JsonPair kv : sheets) {
-            // FIX: Saubere Initialisierung der SheetDef
             SheetDef def; 
             def.filePath = kv.value()["file"].as<String>(); 
             def.cols = kv.value()["cols"] | 1; 
-            
-            // Tile-Größe initial auf 0 setzen, damit sie später berechnet wird!
-            def.tileW = 0;
-            def.tileH = 0;
-            
-            // Optional: Wenn rows/cols im JSON steht, könnte man es auch lesen, 
-            // aber die Berechnung aus der Bildbreite (in loadIconFromSheet) ist sicherer.
-            
+            def.tileW = 0; def.tileH = 0;
             sheetCatalog[kv.key().c_str()] = def;
         }
         JsonObject icons = (*doc)["icons"];
