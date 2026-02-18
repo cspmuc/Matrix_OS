@@ -1,0 +1,33 @@
+{
+  "sheets": {
+    "dotto": { 
+      "file": "/dotto1.bmp", 
+      "cols": 16, 
+      "rows": 64 
+    },
+    "dottopng": { 
+      "file": "/dotto.png", 
+      "cols": 16, 
+      "rows": 128 
+    }
+
+  },
+  "icons": {
+    "sun":     { "sheet": "dotto", "index": 0 },  
+    "cloud":   { "sheet": "dotto", "index": 1 },
+    "smile":   { "sheet": "dotto", "index": 2 },
+    "heart":   { "sheet": "dotto", "index": 3 },
+    "wifi":    { "sheet": "dotto", "index": 4 },
+    "arrow_u": { "sheet": "dotto", "index": 16 },
+    "arrow_d": { "sheet": "dotto", "index": 17 },
+    "unknown": { "sheet": "dotto", "index": 63 },
+    "kiss":    { "sheet": "dottopng", "index": 272 },
+    "test":    { "sheet": "dottopng", "index": 17 } 
+  },
+  "aliases": {
+    "germany": 512,
+    "wetter": 2356,
+    "youtube": 4567,
+    "alarm": 1234
+  }
+}

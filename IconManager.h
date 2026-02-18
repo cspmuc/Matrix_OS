@@ -56,7 +56,7 @@ struct PngExtractContext {
     int sheetW;
     // Transparenz Infos
     bool hasTransColor;
-    uint32_t transColor; // Geändert auf uint32_t für RGB Support
+    uint32_t transColor; // Für RGB Support
 };
 
 struct PngDownloadContext {
@@ -75,12 +75,15 @@ private:
     std::list<AnimatedIcon*> animCache;    
     std::vector<String> failedIcons;       
 
-    const size_t MAX_CACHE_SIZE_STATIC = 50;
+    // OPTIMIERUNG 1: Cache erhöht (PSRAM Nutzung)
+    const size_t MAX_CACHE_SIZE_STATIC = 500;
     const size_t MAX_CACHE_SIZE_ANIM = 10; 
     
     PNG png; 
     AnimatedGIF gif; 
-    static File staticGifFile; 
+    
+    // OPTIMIERUNG 3: Inline Static Definition (Sauberer C++ Stil)
+    inline static File staticGifFile; 
 
     // --- Helper ---
     uint32_t read32(const uint8_t* data, int offset) {
@@ -250,7 +253,6 @@ private:
             // Type 3: Palette (Indexiert)
             if (pixelType == 3 && pPalette) { 
                 uint8_t idx = src[x];
-                // FIX: Transparenzprüfung mit korrekter Methode
                 if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { 
                     a = 0; 
                 } else {
@@ -261,13 +263,12 @@ private:
             else if (pixelType == 2) { 
                 int idx = x * 3;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2];
-                // FIX: Prüfen auf transparenten "Key Color" (oft Magenta oder ähnlich)
                 if (ctx->hasTransColor) {
                     uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
                     if(rgb == ctx->transColor) a = 0;
                 }
             }
-            // Type 6: RGBA (Truecolor Alpha) - Hier ist Alpha direkt im Bild
+            // Type 6: RGBA (Truecolor Alpha)
             else if (pixelType == 6) { 
                 int idx = x * 4;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
@@ -317,9 +318,8 @@ private:
         ctx.targetH = tileH;
         ctx.sheetW = imgW;
         
-        // FIX: Transparenz jetzt aktiviert mit getTransparentColor()
         ctx.hasTransColor = false;
-        int transColor = png.getTransparentColor(); // Gibt -1 wenn keine, sonst Farbwert/Index
+        int transColor = png.getTransparentColor(); 
         if(transColor != -1) { 
             ctx.hasTransColor = true; 
             ctx.transColor = (uint32_t)transColor; 
@@ -335,7 +335,10 @@ private:
         if (sheetCatalog.find(sheetName) == sheetCatalog.end()) return nullptr;
         SheetDef& sheet = sheetCatalog[sheetName];
         
-        if (sheet.filePath.endsWith(".png") || sheet.filePath.endsWith(".PNG")) {
+        // OPTIMIERUNG 2: Case-Insensitive Prüfung
+        String lowerPath = sheet.filePath;
+        lowerPath.toLowerCase();
+        if (lowerPath.endsWith(".png")) {
             return loadPngIconFromSheet(sheet, index);
         }
 
@@ -408,9 +411,6 @@ private:
 
             if (pixelType == 3 && pPalette) { // Palette
                 uint8_t idx = src[x];
-                // Einfache Transparenzannahme für Download (oft Index 0)
-                // oder besser: Wenn getTransparentColor hier verfügbar wäre.
-                // Da Download meist Einzelbilder sind, ist RGBA am sichersten.
                 r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2];
             } 
             else if (pixelType == 2) { // RGB
@@ -580,8 +580,6 @@ private:
                  File f = LittleFS.open("/temp_dl.dat", "w");
                  if (f && downloadFile(http, f)) {
                      f.close();
-                     
-                     // FIX: PNG Download nutzt jetzt eigene Logik (pngDownloadDraw)
                      PngDownloadContext ctx;
                      File fOut = LittleFS.open(outName, "w");
                      if(fOut) {
@@ -596,7 +594,6 @@ private:
                              write32(header, 10, 54);
                              write32(header, 14, 40);
                              write32(header, 18, ctx.w);
-                             // Top-Down speichern (negative Höhe) für Downloaded Images
                              uint32_t negH = (uint32_t)(-h); 
                              write32(header, 22, negH); 
                              write16(header, 26, 1);
@@ -783,5 +780,3 @@ public:
         return i ? (i->height == 8 ? 16 : i->height) : 16; 
     }
 };
-
-File IconManager::staticGifFile;
