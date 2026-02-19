@@ -7,11 +7,23 @@
 #include "DisplayManager.h"
 #include "SensorApp.h" 
 #include <time.h> 
+#include <esp_heap_caps.h> 
 
 extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
-// NEU: Damit wir forceOverlay (Urgent) aufrufen können
 extern void forceOverlay(String msg, int durationSec, String colorName);
+
+// Eigener Allocator für ArduinoJson, der den PSRAM zwingend nutzt
+// NEU: Mit include-Guard, damit er nicht doppelt definiert wird!
+#ifndef SPIRAM_ALLOCATOR_DEFINED
+#define SPIRAM_ALLOCATOR_DEFINED
+struct SpiRamAllocator {
+  void* allocate(size_t size) { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
+  void deallocate(void* pointer) { heap_caps_free(pointer); }
+  void* reallocate(void* ptr, size_t new_size) { return heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM); }
+};
+using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
+#endif
 
 class MatrixNetworkManager {
 private:
@@ -37,9 +49,9 @@ private:
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
         
-        // DANK PSRAM: Wir gönnen uns einen riesigen JSON Buffer auf dem Heap (8KB).
-        // Damit können auch komplexe Sensor-Pages oder lange Texte empfangen werden.
-        DynamicJsonDocument* doc = new DynamicJsonDocument(8192);
+        // DANK PSRAM ALLOCATOR: Wir gönnen uns einen riesigen JSON Buffer (8KB).
+        // Jetzt landet er GARANTIERT im PSRAM und crasht das System nicht!
+        SpiRamJsonDocument* doc = new SpiRamJsonDocument(8192);
         DeserializationError error = deserializeJson(*doc, payload, length);
         
         if (error) {
@@ -74,7 +86,6 @@ private:
              int dur = (*doc)["duration"] | 5;    
              String col = (*doc)["color"] | "white";
              int speed = (*doc)["speed"] | 30; 
-             // NEU: Prüfung auf 'urgent' Flag
              bool urgent = (*doc)["urgent"] | false;
              
              // DEBUG: Zeigt im Serial Monitor an, was ankommt

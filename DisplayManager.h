@@ -4,10 +4,57 @@
 #include <Adafruit_GFX.h>
 #include "config.h"
 
+// --- Eigene PSRAM Canvas Klasse ---
+// Verhindert, dass Adafruit_GFX 16KB im internen RAM belegt!
+class PSRAMCanvas16 : public Adafruit_GFX {
+private:
+    uint16_t *buffer;
+public:
+    PSRAMCanvas16(uint16_t w, uint16_t h) : Adafruit_GFX(w, h) {
+        buffer = (uint16_t*)heap_caps_malloc(w * h * 2, MALLOC_CAP_SPIRAM);
+    }
+    ~PSRAMCanvas16() { 
+        if(buffer) heap_caps_free(buffer); 
+    }
+    uint16_t* getBuffer() { return buffer; }
+    
+    void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+        if (x < 0 || y < 0 || x >= _width || y >= _height) return;
+        buffer[y * _width + x] = color;
+    }
+    void fillScreen(uint16_t color) override {
+        if(buffer) {
+            uint8_t hi = color >> 8, lo = color & 0xFF;
+            if(hi == lo) {
+                memset(buffer, lo, _width * _height * 2);
+            } else {
+                uint32_t pixels = _width * _height;
+                for(uint32_t i=0; i<pixels; i++) buffer[i] = color;
+            }
+        }
+    }
+    void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) override {
+        if(x < 0 || x >= _width || y >= _height) return;
+        if(y < 0) { h += y; y = 0; }
+        if(y + h > _height) { h = _height - y; }
+        if(h <= 0) return;
+        uint16_t *ptr = buffer + y * _width + x;
+        for(int16_t i=0; i<h; i++) { *ptr = color; ptr += _width; }
+    }
+    void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) override {
+        if(y < 0 || y >= _height || x >= _width) return;
+        if(x < 0) { w += x; x = 0; }
+        if(x + w > _width) { w = _width - x; }
+        if(w <= 0) return;
+        uint16_t *ptr = buffer + y * _width + x;
+        for(int16_t i=0; i<w; i++) { *ptr++ = color; }
+    }
+};
+
 class DisplayManager {
 private:
     MatrixPanel_I2S_DMA* dma;
-    GFXcanvas16* canvas; // Soft Double Buffer im PSRAM
+    PSRAMCanvas16* canvas; // Soft Double Buffer im PSRAM (Eigene Klasse)
     U8G2_FOR_ADAFRUIT_GFX u8g2; 
 
     uint8_t gammaTable[256];
@@ -49,7 +96,7 @@ public:
         if (!dma->begin()) return false;
         
         // PSRAM Canvas erstellen
-        canvas = new GFXcanvas16(M_WIDTH, M_HEIGHT);
+        canvas = new PSRAMCanvas16(M_WIDTH, M_HEIGHT);
         if (!canvas) return false; 
         
         // U8g2 auf den Canvas binden

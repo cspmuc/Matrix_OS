@@ -13,6 +13,17 @@
 #include <esp_heap_caps.h> 
 #include <esp_task_wdt.h> 
 
+// Allocator für ArduinoJson im PSRAM
+#ifndef SPIRAM_ALLOCATOR_DEFINED
+#define SPIRAM_ALLOCATOR_DEFINED
+struct SpiRamAllocator {
+  void* allocate(size_t size) { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
+  void deallocate(void* pointer) { heap_caps_free(pointer); }
+  void* reallocate(void* ptr, size_t new_size) { return heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM); }
+};
+using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
+#endif
+
 struct IconDef { String sheetName; int index; };
 struct SheetDef { 
     String filePath; 
@@ -159,15 +170,15 @@ private:
         anim->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
         if (!anim->pixels || !anim->alpha) { 
-            if(anim->pixels) free(anim->pixels); 
-            if(anim->alpha) free(anim->alpha); 
+            if(anim->pixels) heap_caps_free(anim->pixels); 
+            if(anim->alpha) heap_caps_free(anim->alpha); 
             delete anim; f.close(); return nullptr; 
         }
 
         size_t lineSize = w * 4;
-        uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
+        uint8_t* lineBuffer = (uint8_t*)heap_caps_malloc(lineSize, MALLOC_CAP_SPIRAM);
         if (!lineBuffer) { 
-            free(anim->pixels); free(anim->alpha); delete anim; f.close(); return nullptr; 
+            heap_caps_free(anim->pixels); heap_caps_free(anim->alpha); delete anim; f.close(); return nullptr; 
         }
 
         for (int y = 0; y < h; y++) {
@@ -184,7 +195,7 @@ private:
                 anim->alpha[y * w + x] = lineBuffer[idx+3];
             }
         }
-        free(lineBuffer); f.close(); return anim;
+        heap_caps_free(lineBuffer); f.close(); return anim;
     }
 
     CachedIcon* loadBmpFile(String filename) {
@@ -210,8 +221,8 @@ private:
         if (!newIcon->pixels || !newIcon->alpha) { delete newIcon; f.close(); return nullptr; }
 
         size_t lineSize = width * 4;
-        uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
-        if(!lineBuffer) { free(newIcon->pixels); free(newIcon->alpha); delete newIcon; f.close(); return nullptr; }
+        uint8_t* lineBuffer = (uint8_t*)heap_caps_malloc(lineSize, MALLOC_CAP_SPIRAM);
+        if(!lineBuffer) { heap_caps_free(newIcon->pixels); heap_caps_free(newIcon->alpha); delete newIcon; f.close(); return nullptr; }
 
         for (int y = 0; y < height; y++) {
              if (y % 16 == 0) esp_task_wdt_reset();
@@ -226,7 +237,7 @@ private:
                 newIcon->alpha[y * width + x] = lineBuffer[idx+3];
             }
         }
-        free(lineBuffer); f.close(); return newIcon;
+        heap_caps_free(lineBuffer); f.close(); return newIcon;
     }
     
     // --- PNG Sheet Loader ---
@@ -369,7 +380,7 @@ private:
         int startY = row * tileH; 
         
         size_t lineSize = tileW * 4; 
-        uint8_t* lineBuffer = (uint8_t*)malloc(lineSize);
+        uint8_t* lineBuffer = (uint8_t*)heap_caps_malloc(lineSize, MALLOC_CAP_SPIRAM);
         
         for (int y = 0; y < tileH; y++) {
             int srcY_Visual = startY + y;
@@ -382,7 +393,7 @@ private:
                 newIcon->alpha[y * tileW + x] = lineBuffer[x*4+3];
             }
         }
-        free(lineBuffer); f.close(); return newIcon;
+        if (lineBuffer) heap_caps_free(lineBuffer); f.close(); return newIcon;
     }
 
     // --- Standard Callbacks (File I/O) ---
@@ -516,7 +527,7 @@ private:
                         f.close();
                         File fRead = LittleFS.open("/temp_dl.dat", "r");
                         size_t fSize = fRead.size();
-                        uint8_t* gifRamBuffer = (uint8_t*)malloc(fSize);
+                        uint8_t* gifRamBuffer = (uint8_t*)heap_caps_malloc(fSize, MALLOC_CAP_SPIRAM);
                         
                         if (gifRamBuffer && fSize > 50) {
                             fRead.read(gifRamBuffer, fSize); fRead.close();
@@ -554,13 +565,13 @@ private:
                                         writeBmpHeader(fOut, w, totalH);
                                         for (int y = totalH - 1; y >= 0; y--) fOut.write(stripBuffer + (y * w * 4), w * 4);
                                         fOut.close();
-                                        free(stripBuffer); free(canvasBuffer);
+                                        heap_caps_free(stripBuffer); heap_caps_free(canvasBuffer);
                                         success = true;
                                         Serial.println("[ICON] GIF Converted: " + outName);
-                                    } else { if(stripBuffer) free(stripBuffer); if(canvasBuffer) free(canvasBuffer); gif.close(); }
+                                    } else { if(stripBuffer) heap_caps_free(stripBuffer); if(canvasBuffer) heap_caps_free(canvasBuffer); gif.close(); }
                                 }
                             }
-                            if(gifRamBuffer) free(gifRamBuffer);
+                            if(gifRamBuffer) heap_caps_free(gifRamBuffer);
                         } else if(fRead) fRead.close();
                     } else { f.close(); }
                 } 
@@ -600,10 +611,10 @@ private:
                              write16(header, 28, 32); 
                              fOut.write(header, 54);
                              
-                             ctx.lineBuffer = (uint8_t*)malloc(ctx.w * 4);
+                             ctx.lineBuffer = (uint8_t*)heap_caps_malloc(ctx.w * 4, MALLOC_CAP_SPIRAM);
                              if (ctx.lineBuffer) {
                                  png.decode((void*)&ctx, 0); 
-                                 free(ctx.lineBuffer);
+                                 heap_caps_free(ctx.lineBuffer);
                                  success = true;
                                  Serial.println("[ICON] PNG Saved: " + outName);
                              }
@@ -627,7 +638,9 @@ public:
         gif.begin(GIF_PALETTE_RGB888); 
         if (!LittleFS.exists("/catalog.json")) return; 
         File f = LittleFS.open("/catalog.json", "r");
-        DynamicJsonDocument* doc = new DynamicJsonDocument(8192); 
+        
+        // Zwingend in den PSRAM!
+        SpiRamJsonDocument* doc = new SpiRamJsonDocument(8192); 
         deserializeJson(*doc, f); f.close();
 
         JsonObject sheets = (*doc)["sheets"];
@@ -686,7 +699,7 @@ public:
             newIcon->lastUsed = millis();
             if (iconCache.size() >= MAX_CACHE_SIZE_STATIC) {
                 CachedIcon* old = iconCache.back(); iconCache.pop_back(); 
-                free(old->pixels); free(old->alpha); delete old;
+                heap_caps_free(old->pixels); heap_caps_free(old->alpha); delete old;
             }
             iconCache.push_front(newIcon);
         }
@@ -714,7 +727,7 @@ public:
         if (anim) {
             if (animCache.size() >= MAX_CACHE_SIZE_ANIM) {
                 AnimatedIcon* old = animCache.back(); animCache.pop_back();
-                free(old->pixels); free(old->alpha); delete old;
+                heap_caps_free(old->pixels); heap_caps_free(old->alpha); delete old;
             }
             animCache.push_front(anim);
         } else failedIcons.push_back(id);
