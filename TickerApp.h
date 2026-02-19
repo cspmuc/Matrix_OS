@@ -5,7 +5,7 @@
 class TickerApp : public App {
 private:
     RichText richText;
-    String message = "{c:highlight}Icon Engine V2: {c:white}Bitmap: {icon:smile} {icon:heart} {icon:cloud} | Font: {sun} {star} {arrow_u}";
+    String message = "{c:mint}Matrix OS RichTextEngine:{c:white}  Font Icons: {sun}{star}{arrow_u}  Bitmap Icons PNG: {ic:grinning_face}{ic:cowboy_hat_face}{ic:clown_face}  LaMetric Static: {ln:8441}  Animated: {la:61}";
     int scrollX = M_WIDTH;
     int totalWidth = -1;
     unsigned long lastScrollTime = 0;

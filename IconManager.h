@@ -76,7 +76,7 @@ private:
     std::vector<String> failedIcons;       
 
     // OPTIMIERUNG 1: Cache erhöht (PSRAM Nutzung)
-    const size_t MAX_CACHE_SIZE_STATIC = 500;
+    const size_t MAX_CACHE_SIZE_STATIC = 0;
     const size_t MAX_CACHE_SIZE_ANIM = 10; 
     
     PNG png; 
