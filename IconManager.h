@@ -2,7 +2,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
-#include <map>
 #include <list>
 #include <vector>
 #include <HTTPClient.h> 
@@ -22,7 +21,7 @@ struct SpiRamAllocator {
 using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
 #endif
 
-struct IconDef { String sheetName; int index; };
+// Struktur für die "on the fly" Sheet-Definition
 struct SheetDef { 
     String filePath; 
     int cols; 
@@ -76,10 +75,7 @@ struct PngDownloadContext {
 
 class IconManager {
 private:
-    std::map<String, IconDef> iconCatalog;
-    std::map<String, SheetDef> sheetCatalog;
-    std::map<String, String> aliasMap; 
-    
+    // Caches für die fertigen Pixeldaten (liegen im PSRAM)
     std::list<CachedIcon*> iconCache;      
     std::list<AnimatedIcon*> animCache;    
     std::vector<String> failedIcons;       
@@ -333,10 +329,7 @@ private:
         return newIcon;
     }
 
-    CachedIcon* loadIconFromSheet(String sheetName, int index) {
-        if (sheetCatalog.find(sheetName) == sheetCatalog.end()) return nullptr;
-        SheetDef& sheet = sheetCatalog[sheetName];
-        
+    CachedIcon* loadIconFromSheet(const SheetDef& sheet, int index) {
         String lowerPath = sheet.filePath;
         lowerPath.toLowerCase();
         if (lowerPath.endsWith(".png")) {
@@ -414,7 +407,7 @@ private:
     
     // Callback für Download (PNG -> BMP Konvertierung)
     static int pngDownloadDraw(PNGDRAW *pDraw) {
-        if (pDraw->y % 8 == 0) yield();
+        if (pDraw->y % 8 == 0) yield(); 
         
         PngDownloadContext* ctx = (PngDownloadContext*)pDraw->pUser;
         uint8_t* src = (uint8_t*)pDraw->pPixels;
@@ -497,14 +490,13 @@ private:
         }
     }
 
-    // --- RAM-FREUNDLICHER DOWNLOAD (verhindert HTTP Error -1) ---
+    // --- RAM-FREUNDLICHER DOWNLOAD ---
     bool downloadFile(String url, File& fOut) {
         for (int redirects = 0; redirects < 5; redirects++) {
             yield(); 
             
             int httpCode = -1;
             
-            // Sauberer Client auf dem Stack (kein new/delete Pointer Chaos!)
             if (url.startsWith("https")) {
                 WiFiClientSecure client;
                 client.setInsecure();
@@ -585,7 +577,6 @@ private:
         String outName = targetFolder + id + ".bmp";
 
         if (forceAnim) {
-            // WICHTIG: Startet mit http:// um RAM zu sparen. LaMetric leitet dann via 301 auf HTTPS um!
             String url = "http://developer.lametric.com/content/apps/icon_thumbs/" + id + ".gif";
             Serial.println("[ICON] Downloading GIF: " + url);
             
@@ -646,7 +637,6 @@ private:
         }
 
         if (!success) {
-            // WICHTIG: Startet mit http:// um RAM zu sparen. LaMetric leitet dann via 301 auf HTTPS um!
             String url = "http://developer.lametric.com/content/apps/icon_thumbs/" + id + ".png";
             Serial.println("[ICON] Downloading PNG: " + url);
             
@@ -701,40 +691,39 @@ public:
     IconManager() {}
     
     void begin() {
+        // Initialisiert nur noch die Ordner und Bibliotheken.
+        // Caching der JSON wurde hier komplett entfernt!
         gif.begin(GIF_PALETTE_RGB888); 
-        if (!LittleFS.exists("/catalog.json")) return; 
-        File f = LittleFS.open("/catalog.json", "r");
-        
-        SpiRamJsonDocument* doc = new SpiRamJsonDocument(8192); 
-        deserializeJson(*doc, f); f.close();
-
-        JsonObject sheets = (*doc)["sheets"];
-        for (JsonPair kv : sheets) {
-            SheetDef def; 
-            def.filePath = kv.value()["file"].as<String>(); 
-            def.cols = kv.value()["cols"] | 1; 
-            def.tileW = 0; def.tileH = 0;
-            sheetCatalog[kv.key().c_str()] = def;
-        }
-        JsonObject icons = (*doc)["icons"];
-        for (JsonPair kv : icons) {
-            IconDef def; def.sheetName = kv.value()["sheet"].as<String>(); def.index = kv.value()["index"] | 0; 
-            iconCatalog[kv.key().c_str()] = def;
-        }
-        JsonObject aliases = (*doc)["aliases"];
-        for (JsonPair kv : aliases) aliasMap[kv.key().c_str()] = kv.value().as<String>();
-        delete doc; 
-
         if (!LittleFS.exists("/icons")) LittleFS.mkdir("/icons");
         if (!LittleFS.exists("/iconsan")) LittleFS.mkdir("/iconsan");
     }
     
     String resolveAlias(String tag) {
-        if (aliasMap.count(tag)) return aliasMap[tag];
-        return "";
+        String result = "";
+        if (LittleFS.exists("/catalog.json")) {
+            File f = LittleFS.open("/catalog.json", "r");
+            if (f) {
+                // Läd die JSON kurzfristig in den PSRAM
+                SpiRamJsonDocument* doc = new SpiRamJsonDocument(8192); 
+                if (!deserializeJson(*doc, f)) {
+                    if (doc->containsKey("aliases") && (*doc)["aliases"].containsKey(tag)) {
+                        result = (*doc)["aliases"][tag].as<String>();
+                    }
+                }
+                delete doc; // JSON sofort wieder zerstören
+                f.close();
+            }
+        }
+        return result;
     }
 
     CachedIcon* getIcon(String name) {
+        // Bereinigung von Präfixen, falls versehentlich doch etwas durchgerutscht ist
+        if (name.startsWith("ln:")) name = name.substring(3);
+        else if (name.startsWith("la:")) name = name.substring(3);
+        else if (name.startsWith("ic:")) name = name.substring(3);
+
+        // 1. Cache-Prüfung (0 RAM Verbrauch, 0 Ladezeit)
         for (auto it = iconCache.begin(); it != iconCache.end(); ++it) {
             if ((*it)->name == name) {
                 (*it)->lastUsed = millis();
@@ -745,21 +734,57 @@ public:
         for(const String& bad : failedIcons) if (bad == name) return nullptr;
 
         CachedIcon* newIcon = nullptr;
-        if (iconCatalog.count(name)) {
-            newIcon = loadIconFromSheet(iconCatalog[name].sheetName, iconCatalog[name].index);
-        } else if (LittleFS.exists("/icons/" + name + ".bmp")) {
-             newIcon = loadBmpFile("/icons/" + name + ".bmp");
-        } else {
-             bool isNumeric = true;
-             for(unsigned int i=0; i<name.length(); i++) if(!isDigit(name[i])) isNumeric = false;
-             
-             if (isNumeric && name.length() > 0) {
-                 if (downloadAndConvert(name, "/icons/", false)) { 
-                     newIcon = loadBmpFile("/icons/" + name + ".bmp");
-                 } else failedIcons.push_back(name);
-             } else failedIcons.push_back(name);
+        bool foundInCatalog = false;
+
+        // 2. Cache-Miss: In der JSON nachschauen ("on the fly")
+        if (LittleFS.exists("/catalog.json")) {
+            File f = LittleFS.open("/catalog.json", "r");
+            if (f) {
+                SpiRamJsonDocument* doc = new SpiRamJsonDocument(8192);
+                if (!deserializeJson(*doc, f)) {
+                    if (doc->containsKey("icons") && (*doc)["icons"].containsKey(name)) {
+                        String sheetName = (*doc)["icons"][name]["sheet"].as<String>();
+                        int sheetIndex = (*doc)["icons"][name]["index"].as<int>();
+                        
+                        if (doc->containsKey("sheets") && (*doc)["sheets"].containsKey(sheetName)) {
+                            SheetDef def;
+                            def.filePath = (*doc)["sheets"][sheetName]["file"].as<String>();
+                            def.cols = (*doc)["sheets"][sheetName]["cols"] | 1;
+                            def.tileW = 0;
+                            def.tileH = 0;
+                            foundInCatalog = true;
+                            
+                            // WICHTIG: Speicher vor dem Entpacken des Bildes sofort wieder freigeben!
+                            delete doc;
+                            doc = nullptr;
+                            f.close();
+                            
+                            newIcon = loadIconFromSheet(def, sheetIndex);
+                        }
+                    }
+                }
+                if (doc) delete doc;
+                if (f) f.close();
+            }
+        }
+
+        // 3. Fallback: Versuch als lokales Einzel-BMP oder als Download von LaMetric
+        if (!foundInCatalog) {
+             if (LittleFS.exists("/icons/" + name + ".bmp")) {
+                  newIcon = loadBmpFile("/icons/" + name + ".bmp");
+             } else {
+                  bool isNumeric = true;
+                  for(unsigned int i=0; i<name.length(); i++) if(!isDigit(name[i])) isNumeric = false;
+                  
+                  if (isNumeric && name.length() > 0) {
+                      if (downloadAndConvert(name, "/icons/", false)) { 
+                          newIcon = loadBmpFile("/icons/" + name + ".bmp");
+                      } else failedIcons.push_back(name);
+                  } else failedIcons.push_back(name);
+             }
         }
         
+        // 4. In den Cache aufnehmen und alte Icons entfernen
         if (newIcon) {
             newIcon->name = name; 
             newIcon->lastUsed = millis();
@@ -776,6 +801,9 @@ public:
     }
 
     AnimatedIcon* getAnimatedIcon(String id) {
+        if (id.startsWith("la:")) id = id.substring(3);
+        else if (id.startsWith("ln:")) id = id.substring(3);
+
         for (auto it = animCache.begin(); it != animCache.end(); ++it) {
             if ((*it)->name == id) { (*it)->lastUsed = millis(); return *it; }
         }
