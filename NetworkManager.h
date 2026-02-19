@@ -166,10 +166,8 @@ public:
             client.setServer(mqtt_server, mqtt_port);
             client.setCallback(mqttCallbackTrampoline);
             
-            // WICHTIG: Buffer massiv erhöht auf 16384 Bytes (16 KB)!
-            // Da dieser Block zu groß für den internen RAM ist, zwingt es den ESP32,
-            // ihn im PSRAM anzulegen. Das spart wertvollen internen Speicher.
-            client.setBufferSize(16384); 
+
+            client.setBufferSize(4096); 
             
             // KeepAlive auf 30s für schnellere Erkennung von Verbindungsabbrüchen
             client.setKeepAlive(30); 
