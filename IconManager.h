@@ -175,6 +175,8 @@ private:
         }
 
         for (int y = 0; y < h; y++) {
+            if (y % 16 == 0) yield(); 
+            
             int srcY_Visual = y;
             int bmpRow = flipY ? (h - 1 - srcY_Visual) : srcY_Visual;
             size_t filePos = dataOffset + ((size_t)bmpRow * w * 4);
@@ -217,6 +219,8 @@ private:
         if(!lineBuffer) { heap_caps_free(newIcon->pixels); heap_caps_free(newIcon->alpha); delete newIcon; f.close(); return nullptr; }
 
         for (int y = 0; y < height; y++) {
+            if (y % 16 == 0) yield(); 
+            
             int srcY_Visual = y;
             int bmpRow = flipY ? (height - 1 - srcY_Visual) : srcY_Visual;
             size_t filePos = dataOffset + ((size_t)bmpRow * width * 4);
@@ -369,6 +373,8 @@ private:
         uint8_t* lineBuffer = (uint8_t*)heap_caps_malloc(lineSize, MALLOC_CAP_SPIRAM);
         
         for (int y = 0; y < tileH; y++) {
+            if (y % 16 == 0) yield();
+            
             int srcY_Visual = startY + y;
             int bmpRow = flipY ? (height - 1 - srcY_Visual) : srcY_Visual;
             size_t filePos = dataOffset + ((size_t)bmpRow * width * 4) + ((size_t)startX * 4);
@@ -409,7 +415,8 @@ private:
     
     // Callback für Download (PNG -> BMP Konvertierung)
     static int pngDownloadDraw(PNGDRAW *pDraw) {
-        esp_task_wdt_reset();
+        if (pDraw->y % 8 == 0) yield(); // Watchdog füttern
+        
         PngDownloadContext* ctx = (PngDownloadContext*)pDraw->pUser;
         uint8_t* src = (uint8_t*)pDraw->pPixels;
         uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
@@ -456,6 +463,8 @@ private:
     static int32_t GIFSeek(GIFFILE *handle, int32_t position) { return 0; }
 
     static void GIFDrawCallback(GIFDRAW *pDraw) {
+        if (pDraw->y % 8 == 0) yield(); 
+
         GifConvertContext* ctx = (GifConvertContext*)pDraw->pUser;
         ctx->dispose = pDraw->ucDisposalMethod;
         ctx->x = pDraw->iX;
@@ -489,13 +498,12 @@ private:
         }
     }
 
-    // --- NEU: EIGENE, ROBUSTE REDIRECT-ROUTINE ---
-    // Diese Methode schließt bei Weiterleitungen die alte TLS-Verbindung und zwingt 
-    // den ESP32 zu einem frischen Handshake mit den neuen Amazon S3 Hostnamen.
+    // Eigene, sichere HTTPS / S3 Fetch Routine
     bool fetchToTempFile(String url) {
         LittleFS.remove("/temp_dl.dat");
         
         for (int redirects = 0; redirects < 5; redirects++) {
+            yield(); 
             bool isHttps = url.startsWith("https");
             HTTPClient http;
             WiFiClient* client = nullptr;
@@ -509,9 +517,13 @@ private:
             }
             
             http.begin(*client, url);
-            const char* headerKeys[] = {"Location"};
-            http.collectHeaders(headerKeys, 1);
-            http.setTimeout(5000);
+            
+            // Tarnung als Browser, da Cloudflare/S3 manchmal blockt!
+            http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            
+            const char* headerKeys[] = {"Location", "location"};
+            http.collectHeaders(headerKeys, 2);
+            http.setTimeout(5000); 
             
             int httpCode = http.GET();
             bool result = false;
@@ -519,6 +531,7 @@ private:
             if (httpCode == HTTP_CODE_OK) {
                 File f = LittleFS.open("/temp_dl.dat", "w");
                 if (f) {
+                    // writeToStream erledigt Chunked Encoding sicher und performant
                     int written = http.writeToStream(&f);
                     f.close();
                     if (written > 0) result = true;
@@ -529,12 +542,14 @@ private:
             } 
             else if (httpCode == 301 || httpCode == 302 || httpCode == 307 || httpCode == 308) {
                 String newUrl = http.header("Location");
+                if (newUrl == "") newUrl = http.header("location");
                 http.end();
                 delete client;
                 
                 if (newUrl.length() == 0) return false;
                 if (newUrl.startsWith("/")) {
-                    newUrl = "https://developer.lametric.com" + newUrl;
+                    if (newUrl.startsWith("//")) newUrl = "https:" + newUrl;
+                    else newUrl = "https://developer.lametric.com" + newUrl;
                 }
                 url = newUrl;
                 Serial.println(String("[ICON] Redirecting to: ") + url);
@@ -566,7 +581,6 @@ private:
                 
                 if (gifRamBuffer && fSize > 50) {
                     fRead.read(gifRamBuffer, fSize); fRead.close();
-                    esp_task_wdt_reset();
                     
                     if (gif.open(gifRamBuffer, fSize, GIFDrawCallback)) {
                         GIFINFO info;
@@ -588,12 +602,12 @@ private:
                                 int prevDispose = 2;
                                 
                                 for (int i=0; i<frames; i++) {
+                                    yield(); // Watchdog pro Frame
                                     ctx.frameIndex = i;
                                     if (prevDispose == 2) memset(canvasBuffer, 0, canvasSize); 
                                     gif.playFrame(false, NULL, &ctx); 
                                     memcpy(stripBuffer + (i*canvasSize), canvasBuffer, canvasSize);
                                     prevDispose = ctx.dispose;
-                                    esp_task_wdt_reset();
                                 }
                                 gif.close();
                                 File fOut = LittleFS.open(outName, "w");
@@ -697,6 +711,11 @@ public:
     }
 
     CachedIcon* getIcon(String name) {
+        // Steuerungs-Präfixe direkt am Anfang restlos entfernen!
+        if (name.startsWith("ln:")) name = name.substring(3);
+        else if (name.startsWith("la:")) name = name.substring(3);
+        else if (name.startsWith("ic:")) name = name.substring(3);
+
         for (auto it = iconCache.begin(); it != iconCache.end(); ++it) {
             if ((*it)->name == name) {
                 (*it)->lastUsed = millis();
@@ -714,6 +733,7 @@ public:
         } else {
              bool isNumeric = true;
              for(unsigned int i=0; i<name.length(); i++) if(!isDigit(name[i])) isNumeric = false;
+             
              if (isNumeric && name.length() > 0) {
                  if (downloadAndConvert(name, "/icons/", false)) { 
                      newIcon = loadBmpFile("/icons/" + name + ".bmp");
@@ -735,6 +755,10 @@ public:
     }
 
     AnimatedIcon* getAnimatedIcon(String id) {
+        // Steuerungs-Präfixe direkt am Anfang restlos entfernen!
+        if (id.startsWith("la:")) id = id.substring(3);
+        else if (id.startsWith("ln:")) id = id.substring(3);
+
         for (auto it = animCache.begin(); it != animCache.end(); ++it) {
             if ((*it)->name == id) { (*it)->lastUsed = millis(); return *it; }
         }
@@ -746,9 +770,13 @@ public:
         if (!LittleFS.exists(path)) {
             bool isNumeric = true;
             for(unsigned int i=0; i<id.length(); i++) if(!isDigit(id[i])) isNumeric = false;
+            
             if (isNumeric && id.length() > 0) {
                 if (!downloadAndConvert(id, "/iconsan/", true)) { failedIcons.push_back(id); return nullptr; }
-            } else return nullptr;
+            } else {
+                failedIcons.push_back(id);
+                return nullptr;
+            }
         }
         anim = loadAnimFromFS(path, id);
         
