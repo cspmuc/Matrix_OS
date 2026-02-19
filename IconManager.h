@@ -13,7 +13,6 @@
 #include <esp_heap_caps.h> 
 #include <esp_task_wdt.h> 
 
-// Allocator für ArduinoJson im PSRAM
 #ifndef SPIRAM_ALLOCATOR_DEFINED
 #define SPIRAM_ALLOCATOR_DEFINED
 struct SpiRamAllocator {
@@ -54,26 +53,26 @@ struct AnimatedIcon {
     unsigned long lastUsed;
 };
 
-// --- Context Strukturen ---
 struct GifConvertContext {
     uint8_t* canvasBuffer; 
     int width, height, dispose, x, y, w, h, frameIndex; 
 };
 
 struct PngExtractContext {
-    uint16_t* pixels; // Zielbuffer 565
-    uint8_t* alpha;   // Zielbuffer Alpha
+    uint16_t* pixels; 
+    uint8_t* alpha;   
     int targetX, targetY, targetW, targetH; 
     int sheetW;
-    // Transparenz Infos
     bool hasTransColor;
-    uint32_t transColor; // Für RGB Support
+    uint32_t transColor; 
 };
 
 struct PngDownloadContext {
     File* fOut;
     int w;
     uint8_t* lineBuffer; 
+    bool hasTransColor;
+    uint32_t transColor;
 };
 
 class IconManager {
@@ -86,17 +85,13 @@ private:
     std::list<AnimatedIcon*> animCache;    
     std::vector<String> failedIcons;       
 
-    // OPTIMIERUNG 1: Cache erhöht (PSRAM Nutzung)
-    const size_t MAX_CACHE_SIZE_STATIC = 0;
+    // Dank PSRAM können wir großzügig cachen
+    const size_t MAX_CACHE_SIZE_STATIC = 20;
     const size_t MAX_CACHE_SIZE_ANIM = 10; 
     
     PNG png; 
     AnimatedGIF gif; 
-    
-    // OPTIMIERUNG 3: Inline Static Definition (Sauberer C++ Stil)
-    inline static File staticGifFile; 
 
-    // --- Helper ---
     uint32_t read32(const uint8_t* data, int offset) {
         return data[offset] | (data[offset+1] << 8) | (data[offset+2] << 16) | (data[offset+3] << 24);
     }
@@ -132,8 +127,6 @@ private:
     uint16_t color565(uint8_t r, uint8_t g, uint8_t b) {
         return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     }
-
-    // --- Loading Logic ---
 
     AnimatedIcon* loadAnimFromFS(String filename, String name) {
         if (!LittleFS.exists(filename)) return nullptr;
@@ -182,7 +175,6 @@ private:
         }
 
         for (int y = 0; y < h; y++) {
-            if (y % 16 == 0) esp_task_wdt_reset(); 
             int srcY_Visual = y;
             int bmpRow = flipY ? (h - 1 - srcY_Visual) : srcY_Visual;
             size_t filePos = dataOffset + ((size_t)bmpRow * w * 4);
@@ -225,7 +217,6 @@ private:
         if(!lineBuffer) { heap_caps_free(newIcon->pixels); heap_caps_free(newIcon->alpha); delete newIcon; f.close(); return nullptr; }
 
         for (int y = 0; y < height; y++) {
-             if (y % 16 == 0) esp_task_wdt_reset();
             int srcY_Visual = y;
             int bmpRow = flipY ? (height - 1 - srcY_Visual) : srcY_Visual;
             size_t filePos = dataOffset + ((size_t)bmpRow * width * 4);
@@ -245,7 +236,10 @@ private:
         PngExtractContext* ctx = (PngExtractContext*)pDraw->pUser;
         int y = pDraw->y; 
 
-        if (y < ctx->targetY || y >= ctx->targetY + ctx->targetH) return 1;
+        // EARLY ABORT: Sobald wir unter dem gesuchten Icon sind, brechen wir hart ab!
+        if (y >= ctx->targetY + ctx->targetH) return 0; // 0 = STOP DECODING!
+        
+        if (y < ctx->targetY) return 1; // 1 = CONTINUE (Wir sind noch nicht beim Icon)
 
         uint8_t* src = (uint8_t*)pDraw->pPixels;
         uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
@@ -261,7 +255,6 @@ private:
             
             uint8_t r=0, g=0, b=0, a=255;
 
-            // Type 3: Palette (Indexiert)
             if (pixelType == 3 && pPalette) { 
                 uint8_t idx = src[x];
                 if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { 
@@ -270,7 +263,6 @@ private:
                     r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2];
                 }
             } 
-            // Type 2: RGB (Truecolor)
             else if (pixelType == 2) { 
                 int idx = x * 3;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2];
@@ -279,7 +271,6 @@ private:
                     if(rgb == ctx->transColor) a = 0;
                 }
             }
-            // Type 6: RGBA (Truecolor Alpha)
             else if (pixelType == 6) { 
                 int idx = x * 4;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
@@ -292,15 +283,13 @@ private:
     }
 
     CachedIcon* loadPngIconFromSheet(const SheetDef& sheet, int index) {
-        File f = LittleFS.open(sheet.filePath, "r");
-        if (!f) return nullptr;
+        if (!LittleFS.exists(sheet.filePath)) return nullptr;
 
         if (png.open(sheet.filePath.c_str(), myOpen, myClose, myRead, mySeek, pngSheetDrawCallback) != PNG_SUCCESS) {
-            f.close(); return nullptr;
+            return nullptr;
         }
 
         int imgW = png.getWidth();
-        
         int cols = (sheet.cols > 0) ? sheet.cols : 1;
         int tileW = (sheet.tileW > 0) ? sheet.tileW : (imgW / cols);
         int tileH = (sheet.tileH > 0) ? sheet.tileH : tileW; 
@@ -317,7 +306,7 @@ private:
         newIcon->alpha = (uint8_t*)heap_caps_malloc(tileW * tileH * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
         if (!newIcon->pixels || !newIcon->alpha) {
-            delete newIcon; png.close(); f.close(); return nullptr;
+            delete newIcon; png.close(); return nullptr;
         }
 
         PngExtractContext ctx;
@@ -338,7 +327,6 @@ private:
 
         png.decode((void*)&ctx, 0);
         png.close();
-        f.close();
         return newIcon;
     }
 
@@ -346,14 +334,12 @@ private:
         if (sheetCatalog.find(sheetName) == sheetCatalog.end()) return nullptr;
         SheetDef& sheet = sheetCatalog[sheetName];
         
-        // OPTIMIERUNG 2: Case-Insensitive Prüfung
         String lowerPath = sheet.filePath;
         lowerPath.toLowerCase();
         if (lowerPath.endsWith(".png")) {
             return loadPngIconFromSheet(sheet, index);
         }
 
-        // BMP Logic
         if (!LittleFS.exists(sheet.filePath)) return nullptr;
         File f = LittleFS.open(sheet.filePath, "r");
         uint8_t header[54];
@@ -398,20 +384,32 @@ private:
 
     // --- Standard Callbacks (File I/O) ---
     static void* myOpen(const char *filename, int32_t *size) {
-        File f = LittleFS.open(filename, "r");
-        if (f && size) *size = f.size();
-        return new File(f);
+        File* f = new File(LittleFS.open(filename, "r"));
+        if (*f) {
+            if (size) *size = f->size();
+            return (void*)f;
+        }
+        delete f;
+        return nullptr;
     }
-    static void myClose(void *handle) { File* f = (File*)handle; if(f) f->close(); delete f; }
+    static void myClose(void *handle) { 
+        File* f = (File*)handle; 
+        if(f) { f->close(); delete f; } 
+    }
     static int32_t myRead(PNGFILE *handle, uint8_t *buffer, int32_t length) {
-        File* f = (File*)handle->fHandle; return f->read(buffer, length);
+        File* f = (File*)handle->fHandle; 
+        if (!f) return 0;
+        return f->read(buffer, length);
     }
     static int32_t mySeek(PNGFILE *handle, int32_t position) {
-        File* f = (File*)handle->fHandle; return f->seek(position);
+        File* f = (File*)handle->fHandle; 
+        if (!f) return 0;
+        return f->seek(position);
     }
     
     // Callback für Download (PNG -> BMP Konvertierung)
     static int pngDownloadDraw(PNGDRAW *pDraw) {
+        esp_task_wdt_reset();
         PngDownloadContext* ctx = (PngDownloadContext*)pDraw->pUser;
         uint8_t* src = (uint8_t*)pDraw->pPixels;
         uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
@@ -420,20 +418,27 @@ private:
         for (int x = 0; x < pDraw->iWidth; x++) {
             uint8_t r=0, g=0, b=0, a=255;
 
-            if (pixelType == 3 && pPalette) { // Palette
+            if (pixelType == 3 && pPalette) { 
                 uint8_t idx = src[x];
-                r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2];
+                if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) {
+                    a = 0;
+                } else {
+                    r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2];
+                }
             } 
-            else if (pixelType == 2) { // RGB
+            else if (pixelType == 2) { 
                 int idx = x * 3;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2];
+                if (ctx->hasTransColor) {
+                    uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+                    if(rgb == ctx->transColor) a = 0;
+                }
             }
-            else if (pixelType == 6) { // RGBA
+            else if (pixelType == 6) { 
                 int idx = x * 4;
                 r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
             }
             
-            // Speichern als BGR + A (für BMP)
             int targetIdx = x * 4;
             ctx->lineBuffer[targetIdx]   = b;
             ctx->lineBuffer[targetIdx+1] = g;
@@ -484,149 +489,172 @@ private:
         }
     }
 
-    // --- Download Logic ---
-    bool downloadFile(HTTPClient& http, File& f) {
-        int len = http.getSize();
-        int total = 0;
-        uint8_t buff[512] = { 0 };
-        WiFiClient * stream = http.getStreamPtr();
-        unsigned long start = millis();
-
-        while (http.connected() || (stream && stream->available())) {
-            size_t size = stream ? stream->available() : 0;
-            if (size) {
-                int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-                f.write(buff, c);
-                total += c;
-                start = millis(); 
-            } else { delay(10); }
-            if (millis() - start > 3000) break;
-            if (len > 0 && total >= len) break; 
-            esp_task_wdt_reset();
+    // --- NEU: EIGENE, ROBUSTE REDIRECT-ROUTINE ---
+    // Diese Methode schließt bei Weiterleitungen die alte TLS-Verbindung und zwingt 
+    // den ESP32 zu einem frischen Handshake mit den neuen Amazon S3 Hostnamen.
+    bool fetchToTempFile(String url) {
+        LittleFS.remove("/temp_dl.dat");
+        
+        for (int redirects = 0; redirects < 5; redirects++) {
+            bool isHttps = url.startsWith("https");
+            HTTPClient http;
+            WiFiClient* client = nullptr;
+            
+            if (isHttps) {
+                WiFiClientSecure* secClient = new WiFiClientSecure();
+                secClient->setInsecure();
+                client = secClient;
+            } else {
+                client = new WiFiClient();
+            }
+            
+            http.begin(*client, url);
+            const char* headerKeys[] = {"Location"};
+            http.collectHeaders(headerKeys, 1);
+            http.setTimeout(5000);
+            
+            int httpCode = http.GET();
+            bool result = false;
+            
+            if (httpCode == HTTP_CODE_OK) {
+                File f = LittleFS.open("/temp_dl.dat", "w");
+                if (f) {
+                    int written = http.writeToStream(&f);
+                    f.close();
+                    if (written > 0) result = true;
+                }
+                http.end();
+                delete client;
+                return result;
+            } 
+            else if (httpCode == 301 || httpCode == 302 || httpCode == 307 || httpCode == 308) {
+                String newUrl = http.header("Location");
+                http.end();
+                delete client;
+                
+                if (newUrl.length() == 0) return false;
+                if (newUrl.startsWith("/")) {
+                    newUrl = "https://developer.lametric.com" + newUrl;
+                }
+                url = newUrl;
+                Serial.println(String("[ICON] Redirecting to: ") + url);
+                continue; 
+            } 
+            else {
+                Serial.println(String("[ICON] HTTP Error: ") + String(httpCode) + " for " + url);
+                http.end();
+                delete client;
+                return false;
+            }
         }
-        return total > 0;
+        return false;
     }
 
     bool downloadAndConvert(String id, String targetFolder, bool forceAnim) {
         if (WiFi.status() != WL_CONNECTED) return false;
-        LittleFS.remove("/temp_dl.dat");
         bool success = false;
         String outName = targetFolder + id + ".bmp";
 
         if (forceAnim) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".gif";
             Serial.println("[ICON] Downloading GIF: " + url);
-            WiFiClientSecure client; client.setInsecure();
-            HTTPClient http; http.begin(client, url);
-            http.setUserAgent("Mozilla/5.0 (ESP32)"); http.setTimeout(5000); 
             
-            if (http.GET() == HTTP_CODE_OK) {
-                File f = LittleFS.open("/temp_dl.dat", "w");
-                if (f) {
-                    if (downloadFile(http, f)) {
-                        f.close();
-                        File fRead = LittleFS.open("/temp_dl.dat", "r");
-                        size_t fSize = fRead.size();
-                        uint8_t* gifRamBuffer = (uint8_t*)heap_caps_malloc(fSize, MALLOC_CAP_SPIRAM);
-                        
-                        if (gifRamBuffer && fSize > 50) {
-                            fRead.read(gifRamBuffer, fSize); fRead.close();
-                            esp_task_wdt_reset();
+            if (fetchToTempFile(url)) {
+                File fRead = LittleFS.open("/temp_dl.dat", "r");
+                size_t fSize = fRead.size();
+                uint8_t* gifRamBuffer = (uint8_t*)heap_caps_malloc(fSize, MALLOC_CAP_SPIRAM);
+                
+                if (gifRamBuffer && fSize > 50) {
+                    fRead.read(gifRamBuffer, fSize); fRead.close();
+                    esp_task_wdt_reset();
+                    
+                    if (gif.open(gifRamBuffer, fSize, GIFDrawCallback)) {
+                        GIFINFO info;
+                        if (gif.getInfo(&info) && info.iFrameCount > 0) {
+                            int w = gif.getCanvasWidth();
+                            int h = gif.getCanvasHeight();
+                            int frames = info.iFrameCount;
+                            int totalH = h * frames;
+                            size_t stripSize = w * totalH * 4;
+                            size_t canvasSize = w * h * 4;
                             
-                            if (gif.open(gifRamBuffer, fSize, GIFDrawCallback)) {
-                                GIFINFO info;
-                                if (gif.getInfo(&info) && info.iFrameCount > 0) {
-                                    int w = gif.getCanvasWidth();
-                                    int h = gif.getCanvasHeight();
-                                    int frames = info.iFrameCount;
-                                    int totalH = h * frames;
-                                    size_t stripSize = w * totalH * 4;
-                                    size_t canvasSize = w * h * 4;
-                                    
-                                    uint8_t* stripBuffer = (uint8_t*)heap_caps_malloc(stripSize, MALLOC_CAP_SPIRAM);
-                                    uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
-                                    
-                                    if (stripBuffer && canvasBuffer) {
-                                        memset(stripBuffer, 0, stripSize); 
-                                        memset(canvasBuffer, 0, canvasSize); 
-                                        GifConvertContext ctx = {canvasBuffer, w, h, 0, 0, 0, 0, 0}; 
-                                        int prevDispose = 2;
-                                        
-                                        for (int i=0; i<frames; i++) {
-                                            ctx.frameIndex = i;
-                                            if (prevDispose == 2) memset(canvasBuffer, 0, canvasSize); 
-                                            gif.playFrame(false, NULL, &ctx); 
-                                            memcpy(stripBuffer + (i*canvasSize), canvasBuffer, canvasSize);
-                                            prevDispose = ctx.dispose;
-                                            esp_task_wdt_reset();
-                                        }
-                                        gif.close();
-                                        File fOut = LittleFS.open(outName, "w");
-                                        writeBmpHeader(fOut, w, totalH);
-                                        for (int y = totalH - 1; y >= 0; y--) fOut.write(stripBuffer + (y * w * 4), w * 4);
-                                        fOut.close();
-                                        heap_caps_free(stripBuffer); heap_caps_free(canvasBuffer);
-                                        success = true;
-                                        Serial.println("[ICON] GIF Converted: " + outName);
-                                    } else { if(stripBuffer) heap_caps_free(stripBuffer); if(canvasBuffer) heap_caps_free(canvasBuffer); gif.close(); }
+                            uint8_t* stripBuffer = (uint8_t*)heap_caps_malloc(stripSize, MALLOC_CAP_SPIRAM);
+                            uint8_t* canvasBuffer = (uint8_t*)heap_caps_malloc(canvasSize, MALLOC_CAP_SPIRAM);
+                            
+                            if (stripBuffer && canvasBuffer) {
+                                memset(stripBuffer, 0, stripSize); 
+                                memset(canvasBuffer, 0, canvasSize); 
+                                GifConvertContext ctx = {canvasBuffer, w, h, 0, 0, 0, 0, 0}; 
+                                int prevDispose = 2;
+                                
+                                for (int i=0; i<frames; i++) {
+                                    ctx.frameIndex = i;
+                                    if (prevDispose == 2) memset(canvasBuffer, 0, canvasSize); 
+                                    gif.playFrame(false, NULL, &ctx); 
+                                    memcpy(stripBuffer + (i*canvasSize), canvasBuffer, canvasSize);
+                                    prevDispose = ctx.dispose;
+                                    esp_task_wdt_reset();
                                 }
-                            }
-                            if(gifRamBuffer) heap_caps_free(gifRamBuffer);
-                        } else if(fRead) fRead.close();
-                    } else { f.close(); }
-                } 
-                LittleFS.remove("/temp_dl.dat");
+                                gif.close();
+                                File fOut = LittleFS.open(outName, "w");
+                                writeBmpHeader(fOut, w, totalH);
+                                for (int y = totalH - 1; y >= 0; y--) fOut.write(stripBuffer + (y * w * 4), w * 4);
+                                fOut.close();
+                                heap_caps_free(stripBuffer); heap_caps_free(canvasBuffer);
+                                success = true;
+                                Serial.println("[ICON] GIF Converted: " + outName);
+                            } else { if(stripBuffer) heap_caps_free(stripBuffer); if(canvasBuffer) heap_caps_free(canvasBuffer); gif.close(); }
+                        }
+                    }
+                    if(gifRamBuffer) heap_caps_free(gifRamBuffer);
+                } else if(fRead) fRead.close();
             } 
-            client.stop(); http.end();
+            LittleFS.remove("/temp_dl.dat");
         }
 
         if (!success) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".png";
             Serial.println("[ICON] Downloading PNG: " + url);
-            WiFiClientSecure client; client.setInsecure();
-            HTTPClient http; http.begin(client, url);
-            http.setUserAgent("Mozilla/5.0 (ESP32)"); http.setTimeout(3000);
             
-            if (http.GET() == HTTP_CODE_OK) {
-                 File f = LittleFS.open("/temp_dl.dat", "w");
-                 if (f && downloadFile(http, f)) {
-                     f.close();
-                     PngDownloadContext ctx;
-                     File fOut = LittleFS.open(outName, "w");
-                     if(fOut) {
-                         ctx.fOut = &fOut;
-                         if (png.open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, pngDownloadDraw) == PNG_SUCCESS) {
-                             ctx.w = png.getWidth();
-                             int h = png.getHeight();
-                             uint8_t header[54] = {0};
-                             header[0] = 'B'; header[1] = 'M';
-                             uint32_t dataSize = ctx.w * h * 4;
-                             write32(header, 2, dataSize + 54);
-                             write32(header, 10, 54);
-                             write32(header, 14, 40);
-                             write32(header, 18, ctx.w);
-                             uint32_t negH = (uint32_t)(-h); 
-                             write32(header, 22, negH); 
-                             write16(header, 26, 1);
-                             write16(header, 28, 32); 
-                             fOut.write(header, 54);
-                             
-                             ctx.lineBuffer = (uint8_t*)heap_caps_malloc(ctx.w * 4, MALLOC_CAP_SPIRAM);
-                             if (ctx.lineBuffer) {
-                                 png.decode((void*)&ctx, 0); 
-                                 heap_caps_free(ctx.lineBuffer);
-                                 success = true;
-                                 Serial.println("[ICON] PNG Saved: " + outName);
-                             }
-                             png.close();
+            if (fetchToTempFile(url)) {
+                 PngDownloadContext ctx;
+                 File fOut = LittleFS.open(outName, "w");
+                 if(fOut) {
+                     ctx.fOut = &fOut;
+                     if (png.open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, pngDownloadDraw) == PNG_SUCCESS) {
+                         ctx.w = png.getWidth();
+                         int transColor = png.getTransparentColor();
+                         ctx.hasTransColor = (transColor != -1);
+                         ctx.transColor = (uint32_t)transColor;
+
+                         int h = png.getHeight();
+                         uint8_t header[54] = {0};
+                         header[0] = 'B'; header[1] = 'M';
+                         uint32_t dataSize = ctx.w * h * 4;
+                         write32(header, 2, dataSize + 54);
+                         write32(header, 10, 54);
+                         write32(header, 14, 40);
+                         write32(header, 18, ctx.w);
+                         uint32_t negH = (uint32_t)(-h); 
+                         write32(header, 22, negH); 
+                         write16(header, 26, 1);
+                         write16(header, 28, 32); 
+                         fOut.write(header, 54);
+                         
+                         ctx.lineBuffer = (uint8_t*)heap_caps_malloc(ctx.w * 4, MALLOC_CAP_SPIRAM);
+                         if (ctx.lineBuffer) {
+                             png.decode((void*)&ctx, 0); 
+                             heap_caps_free(ctx.lineBuffer);
+                             success = true;
+                             Serial.println("[ICON] PNG Saved: " + outName);
                          }
-                         fOut.close();
-                         if(!success) LittleFS.remove(outName); 
+                         png.close();
                      }
-                 } else if (f) f.close();
-                 LittleFS.remove("/temp_dl.dat");
+                     fOut.close();
+                     if(!success) LittleFS.remove(outName); 
+                 }
             }
-            client.stop(); http.end();
+            LittleFS.remove("/temp_dl.dat");
         }
         return success;
     }
@@ -639,7 +667,6 @@ public:
         if (!LittleFS.exists("/catalog.json")) return; 
         File f = LittleFS.open("/catalog.json", "r");
         
-        // Zwingend in den PSRAM!
         SpiRamJsonDocument* doc = new SpiRamJsonDocument(8192); 
         deserializeJson(*doc, f); f.close();
 
@@ -697,7 +724,8 @@ public:
         if (newIcon) {
             newIcon->name = name; 
             newIcon->lastUsed = millis();
-            if (iconCache.size() >= MAX_CACHE_SIZE_STATIC) {
+            
+            while (iconCache.size() >= MAX_CACHE_SIZE_STATIC && !iconCache.empty()) {
                 CachedIcon* old = iconCache.back(); iconCache.pop_back(); 
                 heap_caps_free(old->pixels); heap_caps_free(old->alpha); delete old;
             }
@@ -725,7 +753,7 @@ public:
         anim = loadAnimFromFS(path, id);
         
         if (anim) {
-            if (animCache.size() >= MAX_CACHE_SIZE_ANIM) {
+            while (animCache.size() >= MAX_CACHE_SIZE_ANIM && !animCache.empty()) {
                 AnimatedIcon* old = animCache.back(); animCache.pop_back();
                 heap_caps_free(old->pixels); heap_caps_free(old->alpha); delete old;
             }
