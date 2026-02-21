@@ -42,11 +42,12 @@ struct AnimatedIcon {
     String name;
     uint16_t* pixels; 
     uint8_t* alpha;   
+    uint16_t* delays; // NEU: PSRAM-Array für die individuellen Frame-Delays
     int width;        
     int height;       
     int totalHeight;  
     int frameCount;   
-    int delayMs;      
+    int totalTime;    // NEU: Gesamtdauer der Animation in Millisekunden
     unsigned long lastUsed;
 };
 
@@ -140,23 +141,50 @@ private:
 
         AnimatedIcon* anim = new AnimatedIcon();
         anim->name = name; anim->width = w; anim->height = frameH;
-        anim->totalHeight = h; anim->frameCount = frames; anim->delayMs = 100;
+        anim->totalHeight = h; anim->frameCount = frames;
         anim->lastUsed = millis();
 
         size_t numPixels = w * h;
         anim->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         anim->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
+        // NEU: PSRAM Allokation für die Frame-Delays
+        anim->delays = (uint16_t*)heap_caps_malloc(frames * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
-        if (!anim->pixels || !anim->alpha) { 
+        if (!anim->pixels || !anim->alpha || !anim->delays) { 
             if(anim->pixels) heap_caps_free(anim->pixels); 
             if(anim->alpha) heap_caps_free(anim->alpha); 
+            if(anim->delays) heap_caps_free(anim->delays);
             delete anim; f.close(); return nullptr; 
         }
+
+        // --- NEU: DLY Datei laden ---
+        String dlyFilename = filename;
+        dlyFilename.replace(".bmp", ".dly");
+        int calculatedTotalTime = 0;
+
+        File fDly = LittleFS.open(dlyFilename, "r");
+        if (fDly) {
+            for (int i = 0; i < frames; i++) {
+                uint16_t d = 100;
+                if (fDly.available() >= 2) fDly.read((uint8_t*)&d, 2);
+                anim->delays[i] = d;
+                calculatedTotalTime += d;
+            }
+            fDly.close();
+        } else {
+            // Fallback für alte Animationen ohne .dly Datei
+            for (int i = 0; i < frames; i++) {
+                anim->delays[i] = 100;
+                calculatedTotalTime += 100;
+            }
+        }
+        anim->totalTime = calculatedTotalTime;
 
         size_t lineSize = w * 4;
         uint8_t* lineBuffer = (uint8_t*)heap_caps_malloc(lineSize, MALLOC_CAP_SPIRAM);
         if (!lineBuffer) { 
-            heap_caps_free(anim->pixels); heap_caps_free(anim->alpha); delete anim; f.close(); return nullptr; 
+            heap_caps_free(anim->pixels); heap_caps_free(anim->alpha); heap_caps_free(anim->delays);
+            delete anim; f.close(); return nullptr; 
         }
 
         for (int y = 0; y < h; y++) {
@@ -211,12 +239,12 @@ private:
     
     // --- PNG und Sprite Sheet Decoder ---
     static int pngSheetDrawCallback(PNGDRAW *pDraw) {
-        if (pDraw->y % 32 == 0) yield(); // Einziges sinnvolles yield für große PNGs
+        if (pDraw->y % 32 == 0) yield(); 
 
         PngExtractContext* ctx = (PngExtractContext*)pDraw->pUser;
         int y = pDraw->y; 
 
-        if (y >= ctx->targetY + ctx->targetH) return 0; // Early Abort
+        if (y >= ctx->targetY + ctx->targetH) return 0; 
         if (y < ctx->targetY) return 1; 
 
         uint8_t* src = (uint8_t*)pDraw->pPixels;
@@ -399,15 +427,13 @@ private:
         }
     }
 
-    // --- Die saubere und native Download-Routine ---
     bool downloadFile(String url, File& fOut) {
         for (int redirects = 0; redirects < 3; redirects++) {
             WiFiClientSecure client;
-            client.setInsecure(); // Erlaubt auch Downloads von neuen/unbekannten AWS Servern
+            client.setInsecure();
             
             HTTPClient http;
             http.begin(client, url);
-            // Wir tarnen uns als normaler Browser, um Bot-Sperren zu umgehen
             http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
             
             const char* headerKeys[] = {"Location"};
@@ -417,7 +443,6 @@ private:
             int httpCode = http.GET();
             
             if (httpCode == HTTP_CODE_OK) {
-                // writeToStream erledigt alles nativ und perfekt (inkl. Chunked Encoding)
                 int written = http.writeToStream(&fOut);
                 http.end();
                 return written > 0;
@@ -445,6 +470,7 @@ private:
         LittleFS.remove("/temp_dl.dat");
         bool success = false;
         String outName = targetFolder + id + ".bmp";
+        String dlyName = targetFolder + id + ".dly"; // NEU: Delay File
 
         if (forceAnim) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".gif";
@@ -474,15 +500,30 @@ private:
                                 GifConvertContext ctx = {canvasBuffer, w, h, 0, 0, 0, 0, 0}; 
                                 int prevDispose = 2;
                                 
+                                // NEU: Schreibe Delay-Werte parallel
+                                File fDly = LittleFS.open(dlyName, "w");
+                                
                                 for (int i=0; i<frames; i++) {
-                                    if (i % 10 == 0) yield(); // Einziges sinnvolles yield für lange GIFs
+                                    if (i % 10 == 0) yield(); 
                                     ctx.frameIndex = i;
                                     if (prevDispose == 2) memset(canvasBuffer, 0, canvasSize); 
-                                    gif.playFrame(false, NULL, &ctx); 
+                                    
+                                    // Hole Delay von der GIF Lib (in Millisekunden)
+                                    int frameDelayMs = 0;
+                                    gif.playFrame(false, &frameDelayMs, &ctx); 
+                                    if (frameDelayMs < 20) frameDelayMs = 100; // Fallback
+                                    
+                                    if (fDly) {
+                                        uint16_t d = (uint16_t)frameDelayMs;
+                                        fDly.write((uint8_t*)&d, 2);
+                                    }
+                                    
                                     memcpy(stripBuffer + (i*canvasSize), canvasBuffer, canvasSize);
                                     prevDispose = ctx.dispose;
                                 }
+                                if (fDly) fDly.close();
                                 gif.close();
+                                
                                 File fOut = LittleFS.open(outName, "w");
                                 writeBmpHeader(fOut, w, totalH);
                                 for (int y = totalH - 1; y >= 0; y--) fOut.write(stripBuffer + (y * w * 4), w * 4);
@@ -499,7 +540,7 @@ private:
             LittleFS.remove("/temp_dl.dat");
         }
 
-        if (!success) {
+        if (!success && !forceAnim) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".png";
             Serial.println("[ICON] Downloading PNG: " + url);
             File f = LittleFS.open("/temp_dl.dat", "w");
@@ -514,7 +555,7 @@ private:
                          ctx.hasTransColor = (tColor != -1); ctx.transColor = (uint32_t)tColor;
 
                          int h = png.getHeight();
-                         writeBmpHeader(fOut, ctx.w, -h); // Negative Höhe für Top-Down BMP
+                         writeBmpHeader(fOut, ctx.w, -h); 
                          
                          ctx.lineBuffer = (uint8_t*)heap_caps_malloc(ctx.w * 4, MALLOC_CAP_SPIRAM);
                          if (ctx.lineBuffer) {
@@ -561,12 +602,10 @@ public:
     }
 
     CachedIcon* getIcon(String name) {
-        // Bereinigung von versehentlich übergebenen Präfixen
         if (name.startsWith("ln:")) name = name.substring(3);
         else if (name.startsWith("la:")) name = name.substring(3);
         else if (name.startsWith("ic:")) name = name.substring(3);
 
-        // 1. Blitzschnelle RAM Cache-Prüfung
         for (auto it = iconCache.begin(); it != iconCache.end(); ++it) {
             if ((*it)->name == name) {
                 (*it)->lastUsed = millis();
@@ -579,7 +618,6 @@ public:
         CachedIcon* newIcon = nullptr;
         bool foundInCatalog = false;
 
-        // 2. On-the-fly JSON Suche im Flash (RAM freundlich!)
         if (LittleFS.exists("/catalog.json")) {
             File f = LittleFS.open("/catalog.json", "r");
             if (f) {
@@ -595,9 +633,7 @@ public:
                             def.cols = (*doc)["sheets"][sheetName]["cols"] | 1;
                             foundInCatalog = true;
                             
-                            // JSON Speicher sofort wieder freigeben, bevor entpackt wird!
                             delete doc; doc = nullptr; f.close();
-                            
                             newIcon = loadIconFromSheet(def, sheetIndex);
                         }
                     }
@@ -607,7 +643,6 @@ public:
             }
         }
 
-        // 3. Fallback: Datei lokal laden oder aus dem Internet saugen
         if (!foundInCatalog) {
              if (LittleFS.exists("/icons/" + name + ".bmp")) {
                   newIcon = loadBmpFile("/icons/" + name + ".bmp");
@@ -623,7 +658,6 @@ public:
              }
         }
         
-        // 4. In Cache eintragen
         if (newIcon) {
             newIcon->name = name; 
             newIcon->lastUsed = millis();
@@ -665,6 +699,7 @@ public:
                 AnimatedIcon* old = animCache.back(); animCache.pop_back();
                 if(old->pixels) heap_caps_free(old->pixels); 
                 if(old->alpha) heap_caps_free(old->alpha); 
+                if(old->delays) heap_caps_free(old->delays); // NEU: PSRAM Freigabe
                 delete old;
             }
             animCache.push_front(anim);
@@ -694,11 +729,20 @@ public:
         AnimatedIcon* anim = getAnimatedIcon(id);
         if (!anim) { display.drawPixel(x, y, display.color565(255, 0, 0)); return; }
 
-        int frameDuration = anim->delayMs; 
-        if (frameDuration < 50) frameDuration = 500; 
-        int totalTime = anim->frameCount * frameDuration;
-        int currentFrameIdx = (millis() % totalTime) / frameDuration;
-        if (currentFrameIdx >= anim->frameCount) currentFrameIdx = 0; 
+        int currentFrameIdx = 0;
+        
+        // --- NEU: Dynamische Frame-Auswahl anhand summierter Delays ---
+        if (anim->totalTime > 0) {
+            unsigned long timeInCycle = millis() % anim->totalTime;
+            unsigned long accumulatedTime = 0;
+            for (int i = 0; i < anim->frameCount; i++) {
+                accumulatedTime += anim->delays[i];
+                if (timeInCycle < accumulatedTime) {
+                    currentFrameIdx = i;
+                    break;
+                }
+            }
+        }
 
         int pixelsPerFrame = anim->width * anim->height;
         int startPixelIdx = currentFrameIdx * pixelsPerFrame;
