@@ -83,8 +83,22 @@ public:
         }
         if (currentPageIt == pages.end()) currentPageIt = pages.begin();
 
+        // --- NEU: Animations-Check ---
+        // Wir prüfen, ob die aktuell angezeigte Seite ein animiertes Icon ("la:") enthält.
+        bool hasAnimation = false;
+        if (currentPageIt != pages.end()) {
+            for (const auto& item : currentPageIt->second.items) {
+                // Prüft das Icon-Feld und den Text auf das "la:" Tag
+                if (item.icon.indexOf("la:") != -1 || item.text.indexOf("{la:") != -1) {
+                    hasAnimation = true;
+                    break;
+                }
+            }
+        }
+
         // 4. Update Check
-        if (!force && !needsRedraw) {
+        // Wenn ein animiertes Icon da ist, ignorieren wir das Caching und zeichnen jeden Frame neu!
+        if (!force && !needsRedraw && !hasAnimation) {
             return false; 
         }
 
@@ -119,14 +133,12 @@ private:
         
         if (p.layoutType == 1 && p.items.size() > 0) {
             SensorItem& item = p.items[0];
-            // FIX: Farbe explizit auflösen (unterstützt jetzt "gold", "Gold" etc.)
             uint16_t color = richText.getColorByName(display, item.color);
             
             String content = "";
             if(item.icon != "") content += "{" + item.icon + "} ";
             content += "{b}" + item.text;
             
-            // Übergabe der Farbe als Default Color
             richText.drawCentered(display, 46, content, "Medium", color);
             
         } else if (p.layoutType == 2) {
@@ -135,7 +147,7 @@ private:
                 uint16_t color = richText.getColorByName(display, item.color);
                 String content = "";
                 if(item.icon != "") content += "{" + item.icon + "} ";
-                content += item.text; // Kein {c:white} Zwang mehr
+                content += item.text; 
                 richText.drawCentered(display, yPos, content, "Medium", color);
                 yPos += 22; 
             }
