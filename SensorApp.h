@@ -26,7 +26,7 @@ private:
     std::map<String, SensorPage> pages;
     std::map<String, SensorPage>::iterator currentPageIt;
     unsigned long lastPageSwitch = 0;
-    const int SWITCH_DELAY = 5000; 
+    const int SWITCH_DELAY = 7000; 
 
     bool needsRedraw = true;
 
