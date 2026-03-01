@@ -1,5 +1,6 @@
 #pragma once
 #include <WiFi.h>
+#include <ESPmDNS.h>      // <--- NEU: Die mDNS Bibliothek
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -148,7 +149,12 @@ public:
         if (WiFi.status() == WL_CONNECTED) return true;
         if (WiFi.status() != WL_CONNECTED) {
              WiFi.mode(WIFI_STA);
-             configureStaticIP(); // IP anwenden bevor die Verbindung startet
+             
+             // --- NEU: DHCP Hostname setzen (für den Router) ---
+             // Muss passieren, bevor config() oder begin() aufgerufen werden!
+             WiFi.setHostname(HOSTNAME); 
+             
+             configureStaticIP();
              WiFi.begin(ssid, password);
         }
         if (WiFi.status() == WL_CONNECTED) {
@@ -163,6 +169,15 @@ public:
 
         if (!otaInitialized) {
             setupOTA();
+            
+            // --- NEU: mDNS Responder starten ---
+            // Erlaubt das Erreichen unter http://matrixos.local
+            if (MDNS.begin(HOSTNAME)) {
+                Serial.print("mDNS responder started: ");
+                Serial.print(HOSTNAME);
+                Serial.println(".local");
+            }
+            
             otaInitialized = true;
         }
         if (!timeInitialized) {
@@ -180,7 +195,8 @@ public:
     }
 
     void setupOTA() {
-        ArduinoOTA.setHostname("Wortuhr-Matrix-OS");
+        // --- NEU: Zieht sich den Hostnamen aus der Config ---
+        ArduinoOTA.setHostname(HOSTNAME);
         ArduinoOTA.setPassword(ota_password);
 
         ArduinoOTA.onStart([this]() { 
@@ -247,7 +263,10 @@ public:
                 otaInitialized = false;
                 mqttInitialized = false; 
                 WiFi.disconnect();
-                configureStaticIP(); // Beim Reconnect die IP Konfig wieder anwenden
+                
+                // Beim Reconnect wieder Hostname und ggf. IP setzen
+                WiFi.setHostname(HOSTNAME); 
+                configureStaticIP(); 
                 WiFi.begin(ssid, password); 
             }
             return; 

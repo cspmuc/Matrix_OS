@@ -8,6 +8,8 @@
 const char* ssid     = CONFIG_WIFISSID;
 const char* password = SECRET_PASS;
 
+const char* HOSTNAME = "MatrixOS"; // <--- NEU: Dein Wunsch-Hostname (ohne Leerzeichen, ohne ".local")
+
 // --- IP KONFIGURATION ---
 const bool USE_STATIC_IP = true; // Setze auf true für eine feste IP, false für DHCP
 const char* STATIC_IP      = "192.168.137.204"; // Wunsch-IP-Adresse
