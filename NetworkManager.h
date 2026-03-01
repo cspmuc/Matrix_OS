@@ -14,7 +14,6 @@ extern void queueOverlay(String msg, int durationSec, String colorName, int scro
 extern void forceOverlay(String msg, int durationSec, String colorName);
 
 // Eigener Allocator für ArduinoJson, der den PSRAM zwingend nutzt
-// NEU: Mit include-Guard, damit er nicht doppelt definiert wird!
 #ifndef SPIRAM_ALLOCATOR_DEFINED
 #define SPIRAM_ALLOCATOR_DEFINED
 struct SpiRamAllocator {
@@ -49,15 +48,12 @@ private:
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
         
-        // DANK PSRAM ALLOCATOR: Wir gönnen uns einen riesigen JSON Buffer (8KB).
-        // Jetzt landet er GARANTIERT im PSRAM und crasht das System nicht!
         SpiRamJsonDocument* doc = new SpiRamJsonDocument(8192);
         DeserializationError error = deserializeJson(*doc, payload, length);
         
         if (error) {
              String msg = "";
              for (int i = 0; i < length; i++) msg += (char)payload[i];
-             // Fallback für einfache Text-Payloads (z.B. "ON"/"OFF" bei Power)
              if (t == "matrix/cmd/power") {
                 if (msg == "OFF") brightnessRef = 0;
                 else if (msg == "ON" && brightnessRef == 0) brightnessRef = 150;
@@ -88,15 +84,12 @@ private:
              int speed = (*doc)["speed"] | 30; 
              bool urgent = (*doc)["urgent"] | false;
              
-             // DEBUG: Zeigt im Serial Monitor an, was ankommt
              Serial.print("MQTT Overlay: "); Serial.println(msg);
              
              if (msg.length() > 0) {
                  if (urgent) {
-                     // Sofort anzeigen, Queue löschen
                      forceOverlay(msg, dur, col);
                  } else {
-                     // Normal einreihen
                      queueOverlay(msg, dur, col, speed);
                  }
              }
@@ -123,6 +116,22 @@ private:
         if (instance) instance->handleMqttMessage(topic, payload, length);
     }
 
+    void configureStaticIP() {
+        if (USE_STATIC_IP) {
+            IPAddress ip, gateway, subnet, dns;
+            ip.fromString(STATIC_IP);
+            gateway.fromString(STATIC_GATEWAY);
+            subnet.fromString(STATIC_SUBNET);
+            dns.fromString(STATIC_DNS);
+            
+            if (!WiFi.config(ip, gateway, subnet, dns)) {
+                Serial.println("Network: Failed to configure Static IP");
+            } else {
+                Serial.println("Network: Static IP configured");
+            }
+        }
+    }
+
 public:
     MatrixNetworkManager(AppMode& app, int& bright, DisplayManager& disp, SensorApp& sensors) 
         : client(espClient), currentAppRef(app), brightnessRef(bright), displayRef(disp), sensorAppRef(sensors) {
@@ -134,13 +143,12 @@ public:
     bool isTimeSynced() { return timeSynced; }
 
     bool begin() {
-        // PERFORMANCE: WiFi Sleep deaktivieren!
-        // Verhindert Lags beim Webserver und Ping-Spikes.
         WiFi.setSleep(false); 
         
         if (WiFi.status() == WL_CONNECTED) return true;
         if (WiFi.status() != WL_CONNECTED) {
              WiFi.mode(WIFI_STA);
+             configureStaticIP(); // IP anwenden bevor die Verbindung startet
              WiFi.begin(ssid, password);
         }
         if (WiFi.status() == WL_CONNECTED) {
@@ -158,7 +166,6 @@ public:
             otaInitialized = true;
         }
         if (!timeInitialized) {
-            // Standard NTP Config
             configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
             timeInitialized = true; 
         }
@@ -166,10 +173,7 @@ public:
             client.setServer(mqtt_server, mqtt_port);
             client.setCallback(mqttCallbackTrampoline);
             
-
             client.setBufferSize(4096); 
-            
-            // KeepAlive auf 30s für schnellere Erkennung von Verbindungsabbrüchen
             client.setKeepAlive(30); 
             mqttInitialized = true;
         }
@@ -197,7 +201,6 @@ public:
 
         ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
             int p = (progress / (total / 100));
-            // Nur alle 2% zeichnen um Zeit zu sparen
             if (p % 2 == 0) {
                 displayRef.clear();
                 displayRef.setTextColor(displayRef.color565(255, 255, 0));
@@ -225,9 +228,7 @@ public:
     void checkTimeSync() {
         if (!timeInitialized || timeSynced) return; 
         
-        // Non-blocking Time Check
         time_t now = time(nullptr);
-        // Epoch > 1.6 Mrd (ca. Jahr 2020) als Indikator für gültige Zeit
         if (now > 1600000000) { 
             timeSynced = true;
             queueOverlay("Time Synced", 3, "success", 0); 
@@ -240,13 +241,13 @@ public:
 
         unsigned long now = millis();
         
-        // 1. WiFi Reconnect Logik
         if (WiFi.status() != WL_CONNECTED) {
             if (now - lastWifiCheck > 10000) { 
                 lastWifiCheck = now;
                 otaInitialized = false;
                 mqttInitialized = false; 
                 WiFi.disconnect();
+                configureStaticIP(); // Beim Reconnect die IP Konfig wieder anwenden
                 WiFi.begin(ssid, password); 
             }
             return; 
@@ -254,23 +255,16 @@ public:
 
         tryInitServices();
         
-        // 2. NTP Check (Non-Blocking, nur alle 1 Sekunde prüfen)
         if (!timeSynced && (now - lastTimeCheck > 1000)) {
             lastTimeCheck = now;
             checkTimeSync();
         }
 
-        // 3. MQTT Logic 
-        // Wir prüfen erst per TCP, ob der Server erreichbar ist, bevor wir
-        // in den blockierenden connect() laufen. Das verhindert Freezes.
         if (!client.connected()) {
             if (now - lastMqttRetry > 5000) { 
-                
-                // TCP Pre-Check
                 bool serverReachable = false;
                 {
                     WiFiClient testClient;
-                    // Kurzer Timeout (200ms)
                     if (testClient.connect(mqtt_server, mqtt_port, 200)) {
                         serverReachable = true;
                         testClient.stop();
@@ -278,7 +272,6 @@ public:
                 }
 
                 if (serverReachable) {
-                    // Verbinden
                     if (client.connect("MatrixPortalS3", mqtt_user, mqtt_pass, "matrix/status", 0, true, "OFF")) {
                         client.subscribe("matrix/cmd/#");
                         publishState();
@@ -287,8 +280,6 @@ public:
                 } else {
                     Serial.println("MQTT: Server not reachable (TCP Fail) - Skipping blocking connect");
                 }
-                
-                // Timer erst JETZT updaten -> Garantiert 5s Pause bis zum nächsten Versuch
                 lastMqttRetry = millis(); 
             }
         } else {

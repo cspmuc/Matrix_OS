@@ -4,9 +4,18 @@
 #include <FS.h>
 #include <LittleFS.h>
 
+// --- WLAN ---
 const char* ssid     = CONFIG_WIFISSID;
 const char* password = SECRET_PASS;
 
+// --- IP KONFIGURATION ---
+const bool USE_STATIC_IP = true; // Setze auf true für eine feste IP, false für DHCP
+const char* STATIC_IP      = "192.168.137.204"; // Wunsch-IP-Adresse
+const char* STATIC_SUBNET  = "255.255.255.0";   // Subnetzmaske
+const char* STATIC_GATEWAY = "192.168.137.1";   // Default Gateway (meist der Router)
+const char* STATIC_DNS     = "192.168.137.1";   // DNS Server (meist identisch mit Gateway)
+
+// --- MQTT ---
 const char* mqtt_server   = CONFIG_MQTTSERVER;
 const int   mqtt_port     = CONFIG_MQTTPORT;
 const char* mqtt_user     = SECRET_MQTTUSER;
