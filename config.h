@@ -1,36 +1,7 @@
 #pragma once
 #include <Arduino.h>
-#include "secrets.h"
-#include <FS.h>
-#include <LittleFS.h>
 
-// --- WLAN ---
-const char* ssid     = CONFIG_WIFISSID;
-const char* password = SECRET_PASS;
-
-const char* HOSTNAME = "MatrixOS"; // <--- NEU: Dein Wunsch-Hostname (ohne Leerzeichen, ohne ".local")
-
-// --- IP KONFIGURATION ---
-const bool USE_STATIC_IP = true; // Setze auf true für eine feste IP, false für DHCP
-const char* STATIC_IP      = "192.168.137.204"; // Wunsch-IP-Adresse
-const char* STATIC_SUBNET  = "255.255.255.0";   // Subnetzmaske
-const char* STATIC_GATEWAY = "192.168.137.1";   // Default Gateway (meist der Router)
-const char* STATIC_DNS     = "192.168.137.1";   // DNS Server (meist identisch mit Gateway)
-
-// --- MQTT ---
-const char* mqtt_server   = CONFIG_MQTTSERVER;
-const int   mqtt_port     = CONFIG_MQTTPORT;
-const char* mqtt_user     = SECRET_MQTTUSER;
-const char* mqtt_pass     = SECRET_MQTTPASS;
-
-const char* ota_password  = SECRET_OTAPASS;
-
-// --- ZEIT ---
-const char* ntpServer = CONFIG_NTPSERVER;
-const long  gmtOffset_sec = CONFIG_GMTOFFSETSEC;
-const int   daylightOffset_sec = CONFIG_DAYLIGHTOFFSET;
-
-// --- DISPLAY ---
+// --- DISPLAY HARDWARE ---
 #define M_WIDTH  128   
 #define M_HEIGHT 64
 #define GAMMA_VALUE 2.2 
@@ -51,7 +22,7 @@ const int   daylightOffset_sec = CONFIG_DAYLIGHTOFFSET;
 #define LAT_PIN 47
 #define OE_PIN  14
 
-// App Definitionen
+// --- APP DEFINITIONEN ---
 enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, OFF };
 
 extern AppMode currentApp;

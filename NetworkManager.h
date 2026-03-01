@@ -5,6 +5,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "config.h"
+#include "ConfigManager.h" // <--- NEU: Einbinden des ConfigManagers
 #include "DisplayManager.h"
 #include "SensorApp.h" 
 #include <time.h> 
@@ -34,6 +35,7 @@ private:
     int& brightnessRef;
     DisplayManager& displayRef;
     SensorApp& sensorAppRef; 
+    ConfigManager& conf; // <--- NEU: Referenz auf unsere Konfiguration
 
     static MatrixNetworkManager* instance;
     
@@ -118,12 +120,12 @@ private:
     }
 
     void configureStaticIP() {
-        if (USE_STATIC_IP) {
+        if (conf.network.use_static_ip) {
             IPAddress ip, gateway, subnet, dns;
-            ip.fromString(STATIC_IP);
-            gateway.fromString(STATIC_GATEWAY);
-            subnet.fromString(STATIC_SUBNET);
-            dns.fromString(STATIC_DNS);
+            ip.fromString(conf.network.static_ip);
+            gateway.fromString(conf.network.static_gateway);
+            subnet.fromString(conf.network.static_subnet);
+            dns.fromString(conf.network.static_dns);
             
             if (!WiFi.config(ip, gateway, subnet, dns)) {
                 Serial.println("Network: Failed to configure Static IP");
@@ -134,8 +136,8 @@ private:
     }
 
 public:
-    MatrixNetworkManager(AppMode& app, int& bright, DisplayManager& disp, SensorApp& sensors) 
-        : client(espClient), currentAppRef(app), brightnessRef(bright), displayRef(disp), sensorAppRef(sensors) {
+    MatrixNetworkManager(AppMode& app, int& bright, DisplayManager& disp, SensorApp& sensors, ConfigManager& config) 
+        : client(espClient), currentAppRef(app), brightnessRef(bright), displayRef(disp), sensorAppRef(sensors), conf(config) {
         instance = this;
     }
 
@@ -151,11 +153,10 @@ public:
              WiFi.mode(WIFI_STA);
              
              // --- NEU: DHCP Hostname setzen (für den Router) ---
-             // Muss passieren, bevor config() oder begin() aufgerufen werden!
-             WiFi.setHostname(HOSTNAME); 
+             WiFi.setHostname(conf.network.hostname.c_str()); 
              
              configureStaticIP();
-             WiFi.begin(ssid, password);
+             WiFi.begin(conf.network.wifi_ssid.c_str(), conf.network.wifi_pass.c_str());
         }
         if (WiFi.status() == WL_CONNECTED) {
             tryInitServices(); 
@@ -171,21 +172,20 @@ public:
             setupOTA();
             
             // --- NEU: mDNS Responder starten ---
-            // Erlaubt das Erreichen unter http://matrixos.local
-            if (MDNS.begin(HOSTNAME)) {
+            if (MDNS.begin(conf.network.hostname.c_str())) {
                 Serial.print("mDNS responder started: ");
-                Serial.print(HOSTNAME);
+                Serial.print(conf.network.hostname);
                 Serial.println(".local");
             }
             
             otaInitialized = true;
         }
         if (!timeInitialized) {
-            configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+            configTime(conf.time.gmt_offset_sec, conf.time.daylight_offset_sec, conf.time.ntp_server.c_str());
             timeInitialized = true; 
         }
         if (!mqttInitialized) { 
-            client.setServer(mqtt_server, mqtt_port);
+            client.setServer(conf.mqtt.server.c_str(), conf.mqtt.port);
             client.setCallback(mqttCallbackTrampoline);
             
             client.setBufferSize(4096); 
@@ -195,9 +195,8 @@ public:
     }
 
     void setupOTA() {
-        // --- NEU: Zieht sich den Hostnamen aus der Config ---
-        ArduinoOTA.setHostname(HOSTNAME);
-        ArduinoOTA.setPassword(ota_password);
+        ArduinoOTA.setHostname(conf.network.hostname.c_str());
+        ArduinoOTA.setPassword(conf.system.ota_password.c_str());
 
         ArduinoOTA.onStart([this]() { 
             displayRef.setFade(1.0);
@@ -265,9 +264,9 @@ public:
                 WiFi.disconnect();
                 
                 // Beim Reconnect wieder Hostname und ggf. IP setzen
-                WiFi.setHostname(HOSTNAME); 
+                WiFi.setHostname(conf.network.hostname.c_str()); 
                 configureStaticIP(); 
-                WiFi.begin(ssid, password); 
+                WiFi.begin(conf.network.wifi_ssid.c_str(), conf.network.wifi_pass.c_str()); 
             }
             return; 
         }
@@ -284,14 +283,14 @@ public:
                 bool serverReachable = false;
                 {
                     WiFiClient testClient;
-                    if (testClient.connect(mqtt_server, mqtt_port, 200)) {
+                    if (testClient.connect(conf.mqtt.server.c_str(), conf.mqtt.port, 200)) {
                         serverReachable = true;
                         testClient.stop();
                     }
                 }
 
                 if (serverReachable) {
-                    if (client.connect("MatrixPortalS3", mqtt_user, mqtt_pass, "matrix/status", 0, true, "OFF")) {
+                    if (client.connect(conf.network.hostname.c_str(), conf.mqtt.user.c_str(), conf.mqtt.pass.c_str(), "matrix/status", 0, true, "OFF")) {
                         client.subscribe("matrix/cmd/#");
                         publishState();
                         Serial.println("MQTT: Connected");

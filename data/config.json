@@ -1,0 +1,26 @@
+{
+  "network": {
+    "hostname": "MatrixOS",
+    "wifi_ssid": "FBSTA",
+    "wifi_pass": "todfxbgtakboddwfztWJDBEIKMHXCZHWMON7499233160621731468735fnihab",
+    "use_static_ip": true,
+    "static_ip": "192.168.137.204",
+    "static_subnet": "255.255.255.0",
+    "static_gateway": "192.168.137.1",
+    "static_dns": "192.168.137.1"
+  },
+  "mqtt": {
+    "server": "192.168.137.9",
+    "port": 1883,
+    "user": "mqttusr",
+    "pass": "Jiq#PDhNz43v9YZ"
+  },
+  "time": {
+    "ntp_server": "pool.ntp.org",
+    "gmt_offset_sec": 3600,
+    "daylight_offset_sec": 3600
+  },
+  "system": {
+    "ota_password": "bayern123"
+  }
+}
