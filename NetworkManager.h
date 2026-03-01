@@ -150,6 +150,10 @@ public:
         
         if (WiFi.status() == WL_CONNECTED) return true;
         if (WiFi.status() != WL_CONNECTED) {
+             
+             WiFi.disconnect(true, true); 
+             delay(100);
+             
              WiFi.mode(WIFI_STA);
              
              // --- NEU: DHCP Hostname setzen (für den Router) ---
