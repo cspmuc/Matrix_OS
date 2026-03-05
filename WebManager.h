@@ -16,8 +16,6 @@ private:
     unsigned long lastDrawTime = 0;
     bool uploadError = false;
 
-    // Bereinigt Dateinamen, entfernt Pfade, aber behält den Namen sauber
-    // Gibt jetzt KEIN führendes Slash mehr zurück, damit wir flexibel sind
     String sanitizeFilename(String filename) {
         int lastSlash = filename.lastIndexOf('/');
         if (lastSlash >= 0) filename = filename.substring(lastSlash + 1);
@@ -66,30 +64,35 @@ public:
     WebManager() : server(80) {}
 
     void begin() {
+        // --- 1. HAUPTSEITE (Datei-Browser) ---
         server.on("/", HTTP_GET, [this]() {
             String path = "/";
-            if (server.hasArg("dir")) {
-                path = server.arg("dir");
-            }
+            if (server.hasArg("dir")) path = server.arg("dir");
             if (!path.startsWith("/")) path = "/" + path;
             if (!path.endsWith("/") && path.length() > 1) path += "/";
 
             server.setContentLength(CONTENT_LENGTH_UNKNOWN);
             server.send(200, "text/html", ""); 
             
-            String chunk = "<html><head><title>Matrix OS</title></head><body>";
+            // UTF-8 Meta Tag eingefügt
+            String chunk = "<html><head><meta charset='utf-8'><title>Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>";
             chunk += "<h1>Storage: " + path + "</h1>";
             
             size_t total = LittleFS.totalBytes();
             size_t used = LittleFS.usedBytes();
             chunk += "<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>";
             
-            chunk += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles loeschen?\")'>";
-            chunk += "<input type='submit' value='Formatieren (Alles loeschen)' style='color:red'></form>";
+            // Format & Reboot Buttons (mit korrigierten Umlauten)
+            chunk += "<div style='display: flex; gap: 10px; margin-bottom: 20px;'>";
+            chunk += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles löschen?\")'>";
+            chunk += "<input type='submit' value='Formatieren (Alles löschen)' style='color:red; padding: 5px 10px;'></form>";
             
-            // FIX: Upload-Action enthält jetzt das aktuelle Verzeichnis (?dir=...)
+            chunk += "<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten?\")'>";
+            chunk += "<input type='submit' value='Reboot ESP32' style='color:darkorange; padding: 5px 10px; font-weight: bold;'></form>";
+            chunk += "</div>";
+            
             chunk += "<hr><form method='POST' action='/upload?dir=" + path + "' enctype='multipart/form-data'>";
-            chunk += "<input type='file' name='upload'><input type='submit' value='Upload'>";
+            chunk += "<input type='file' name='upload'><input type='submit' value='Upload' style='padding: 5px 10px;'>";
             chunk += "</form><hr>";
 
             if (path != "/") {
@@ -100,7 +103,7 @@ public:
                 chunk += "<p><a href='/?dir=" + parent + "'>.. (Zurück)</a></p>";
             }
 
-            chunk += "<table border='1'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
+            chunk += "<table border='1' cellpadding='5' style='border-collapse: collapse; text-align: left;'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
             server.sendContent(chunk);
 
             File root = LittleFS.open(path);
@@ -122,7 +125,7 @@ public:
                     } else {
                         String line = "<tr><td><a href='" + fullPath + "'>" + fileName + "</a></td>";
                         line += "<td>" + String(file.size()) + " B</td>";
-                        line += "<td><a href='/delete?name=" + fullPath + "'>Delete</a></td></tr>";
+                        line += "<td><a href='/editor?file=" + fullPath + "'>Edit</a> | <a href='/delete?name=" + fullPath + "' style='color:red;'>Delete</a></td></tr>";
                         server.sendContent(line); 
                     }
                     file = root.openNextFile();
@@ -132,6 +135,86 @@ public:
             server.sendContent(""); 
         });
 
+        // --- 2. EDITOR (Anzeigen) ---
+        server.on("/editor", HTTP_GET, [this]() {
+            if (!server.hasArg("file")) {
+                server.send(400, "text/plain", "Fehler: Keine Datei angegeben.");
+                return;
+            }
+            String filename = server.arg("file");
+            if (!LittleFS.exists(filename)) {
+                server.send(404, "text/plain", "Fehler: Datei nicht gefunden.");
+                return;
+            }
+
+            File f = LittleFS.open(filename, "r");
+            String content = f.readString();
+            f.close();
+
+            // UTF-8 Meta Tag eingefügt
+            String html = "<html><head><meta charset='utf-8'><title>Editor - Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>";
+            html += "<h2>Editing: " + filename + "</h2>";
+            
+            if (server.hasArg("saved")) {
+                html += "<p style='color: green; font-weight: bold;'>Datei erfolgreich gespeichert!</p>";
+            }
+
+            html += "<form method='POST' action='/edit?file=" + filename + "'>";
+            html += "<textarea name='content' rows='25' style='width: 100%; max-width: 800px; font-family: monospace; white-space: pre;'>" + content + "</textarea><br><br>";
+            
+            html += "<div style='display: flex; gap: 15px;'>";
+            html += "<input type='submit' value='&#128190; Speichern' style='padding: 10px 20px; font-size: 16px; cursor: pointer;'>";
+            html += "</form>";
+
+            // "Änderungen" mit echtem "Ä"
+            html += "<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten um Änderungen zu übernehmen?\")'>";
+            html += "<input type='submit' value='&#8635; Reboot ESP32' style='padding: 10px 20px; font-size: 16px; color: darkorange; cursor: pointer;'></form>";
+            html += "</div>";
+
+            html += "<br><br><a href='/?dir=/'>&larr; Zurück zum Datei-Browser</a>";
+            html += "</body></html>";
+            
+            server.send(200, "text/html", html);
+        });
+
+        // --- 3. EDIT (Speichern) ---
+        server.on("/edit", HTTP_POST, [this]() {
+            if (!server.hasArg("file") || !server.hasArg("content")) {
+                server.send(400, "text/plain", "Fehler: Fehlende Parameter.");
+                return;
+            }
+            
+            String filename = server.arg("file");
+            String content = server.arg("content");
+            
+            File f = LittleFS.open(filename, "w"); 
+            if (f) {
+                f.print(content);
+                f.close();
+                forceOverlay("Saved!", 2, "success");
+                
+                server.sendHeader("Location", "/editor?file=" + filename + "&saved=1");
+                server.send(303);
+            } else {
+                server.send(500, "text/plain", "Fehler: Datei konnte nicht geschrieben werden.");
+            }
+        });
+
+        // --- 4. REBOOT ---
+        server.on("/reboot", HTTP_POST, [this]() {
+            // UTF-8 Meta Tag eingefügt
+            String html = "<html><head><meta charset='utf-8'><meta http-equiv='refresh' content='7; url=/'></head>";
+            html += "<body style='font-family: Arial, sans-serif; text-align: center; margin-top: 50px;'>";
+            html += "<h2>System startet neu...</h2>";
+            html += "<p>Bitte warten, du wirst in wenigen Sekunden automatisch weitergeleitet.</p>";
+            html += "</body></html>";
+            
+            server.send(200, "text/html", html);
+            
+            delay(1000); 
+            ESP.restart();
+        });
+
         server.on("/format", HTTP_POST, [this]() {
             display.clear();
             display.setTextColor(display.color565(255, 0, 0));
@@ -139,17 +222,19 @@ public:
             display.show();
             delay(100); 
             LittleFS.format();
-            server.send(200, "text/html", "Formatiert! <a href='/'>Zurueck</a>");
+            // UTF-8 Meta Tag und "Zurück"
+            server.send(200, "text/html", "<html><head><meta charset='utf-8'></head><body>Formatiert! <a href='/'>Zurück</a></body></html>");
             forceOverlay("Format OK", 3, "success");
         });
 
+        // --- UPLOAD ---
         server.on("/upload", HTTP_POST, [this]() {
             if (uploadError) server.send(507, "text/plain", "Error: Write Failed");
             else {
-                // Zurück zur letzten Seite (Directory)
                 String targetDir = "/";
                 if(server.hasArg("dir")) targetDir = server.arg("dir");
-                server.send(200, "text/html", "Upload success! <a href='/?dir=" + targetDir + "'>Back</a>");
+                // HTML und "Zurück" aufgewertet
+                server.send(200, "text/html", "<html><head><meta charset='utf-8'></head><body>Upload erfolgreich! <a href='/?dir=" + targetDir + "'>Zurück</a></body></html>");
                 forceOverlay("Upload OK", 3, "success"); 
             }
         }, [this]() { 
@@ -159,7 +244,6 @@ public:
             if (upload.status == UPLOAD_FILE_START) {
                 uploadError = false; 
                 
-                // FIX: Zielverzeichnis aus URL-Parameter holen
                 String targetDir = "/";
                 if (server.hasArg("dir")) targetDir = server.arg("dir");
                 if (!targetDir.startsWith("/")) targetDir = "/" + targetDir;
@@ -187,7 +271,7 @@ public:
                         Serial.println("Web: Write failed - Disk likely Full");
                         uploadError = true; 
                         uploadFile.close();
-                        // Datei löschen (Name rekonstruieren wie oben)
+                        
                         String targetDir = "/";
                         if (server.hasArg("dir")) targetDir = server.arg("dir");
                         if (!targetDir.startsWith("/")) targetDir = "/" + targetDir;
@@ -235,7 +319,6 @@ public:
                     Serial.println("Web: Deleted " + filename);
                 }
 
-                // FIX: Übergeordneten Ordner finden für Redirect
                 int lastSlash = filename.lastIndexOf('/');
                 if (lastSlash > 0) {
                     String parent = filename.substring(0, lastSlash);

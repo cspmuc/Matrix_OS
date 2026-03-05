@@ -15,10 +15,12 @@
 #include "StorageManager.h" 
 #include "WebManager.h"     
 #include "IconManager.h" 
+#include "ConfigManager.h"
 
 AppMode currentApp = WORDCLOCK;
 int brightness = 150; 
 
+ConfigManager configManager;
 DisplayManager display;
 IconManager iconManager;
 RichText richTextOverlay; 
@@ -31,7 +33,7 @@ PlasmaApp appPlasma;
 StorageManager storage;
 WebManager webServer;       
 
-MatrixNetworkManager network(currentApp, brightness, display, appSensors);
+MatrixNetworkManager network(currentApp, brightness, display, appSensors, configManager);
 bool isBooting = true;
 // FIX für den Boot-Screen
 struct BootLogEntry { String text; uint16_t color; };
@@ -206,6 +208,8 @@ void setup() {
       status("Storage Fail!", display.color565(255, 0, 0)); 
       delay(1000);
 } else { 
+      status("Load Config...", display.color565(255, 255, 0)); 
+      configManager.begin();
       status("Load Icons...", display.color565(255, 255, 0)); 
       iconManager.begin();
 }
