@@ -20,14 +20,14 @@ struct NetworkConfig {
     String wifi_ssid = "DEIN_WLAN";
     String wifi_pass = "DEIN_PASSWORT";
     bool use_static_ip = false;
-    String static_ip = "192.168.178.100";
+    String static_ip = "192.168.178.222";
     String static_subnet = "255.255.255.0";
     String static_gateway = "192.168.178.1";
     String static_dns = "192.168.178.1";
 };
 
 struct MqttConfig {
-    String server = "192.168.178.50";
+    String server = "192.168.178.222";
     int port = 1883;
     String user = "";
     String pass = "";
@@ -40,7 +40,7 @@ struct TimeConfig {
 };
 
 struct SystemConfig {
-    String ota_password = "admin";
+    String ota_password = "otaflash";
 };
 
 // --- 2. Die Manager Klasse ---
