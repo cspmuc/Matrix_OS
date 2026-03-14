@@ -185,7 +185,8 @@ public:
             otaInitialized = true;
         }
         if (!timeInitialized) {
-            configTime(conf.time.gmt_offset_sec, conf.time.daylight_offset_sec, conf.time.ntp_server.c_str());
+            // NEU: Verwendet configTzTime für POSIX Strings anstatt configTime
+            configTzTime(conf.time.timezone.c_str(), conf.time.ntp_server.c_str());
             timeInitialized = true; 
         }
         if (!mqttInitialized) { 

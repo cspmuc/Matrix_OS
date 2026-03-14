@@ -35,8 +35,7 @@ struct MqttConfig {
 
 struct TimeConfig {
     String ntp_server = "pool.ntp.org";
-    long gmt_offset_sec = 3600;
-    int daylight_offset_sec = 3600;
+    String timezone = "CET-1CEST,M3.5.0/02:00:00,M10.5.0/03:00:00"; // Sicherer Standard für Deutschland
 };
 
 struct SystemConfig {
@@ -99,9 +98,8 @@ public:
 
         if (doc->containsKey("time")) {
             JsonObject t = (*doc)["time"];
-            time.ntp_server          = t["ntp_server"] | time.ntp_server;
-            time.gmt_offset_sec      = t["gmt_offset_sec"] | time.gmt_offset_sec;
-            time.daylight_offset_sec = t["daylight_offset_sec"] | time.daylight_offset_sec;
+            time.ntp_server = t["ntp_server"] | time.ntp_server;
+            time.timezone   = t["timezone"] | time.timezone;
         }
 
         if (doc->containsKey("system")) {
