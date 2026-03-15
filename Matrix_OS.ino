@@ -276,30 +276,86 @@ void loop() {
         lastFrameTime = now;
         
         display.setBrightness(brightness);
+
+        // --- 1. HILFSFUNKTIONEN FÜR APP-INSTANZEN ---
+        auto getAppModeByName = [](String name) -> AppMode {
+            name.toLowerCase();
+            if (name == "wordclock") return WORDCLOCK;
+            if (name == "sensors") return SENSORS;
+            if (name == "testpattern") return TESTPATTERN;
+            if (name == "ticker") return TICKER;
+            if (name == "plasma") return PLASMA;
+            return OFF;
+        };
+
+        auto getAppInstance = [](AppMode mode) -> App* {
+            if (mode == WORDCLOCK) return &appWordClock;
+            if (mode == SENSORS) return &appSensors;
+            if (mode == TESTPATTERN) return &appTestPattern;
+            if (mode == TICKER) return &appTicker;
+            if (mode == PLASMA) return &appPlasma;
+            return nullptr;
+        };
+        // ---------------------------------------------
+
         AppMode targetApp = currentApp; 
+        static int autoAppIndex = 0;
+        static unsigned long autoAppFallbackTimer = 0;
+
+        // --- 2. AUTO-ROTATION LOGIK ---
+        if (currentApp == AUTO) {
+            if (configManager.autoMode.apps.empty()) {
+                targetApp = WORDCLOCK; // Fallback, falls die Config leer ist
+            } else {
+                if (autoAppIndex >= configManager.autoMode.apps.size()) autoAppIndex = 0;
+                targetApp = getAppModeByName(configManager.autoMode.apps[autoAppIndex]);
+                
+                App* runningApp = getAppInstance(displayedApp);
+                unsigned long activeTime = millis() - autoAppFallbackTimer;
+                
+                bool ready = false;
+                if (runningApp) ready = runningApp->isReadyToSwitch();
+                if (activeTime > 60000) ready = true; // Fallback: Spätestens nach 60s hart wechseln
+                
+                // Wir wechseln nur, wenn die App fertig ist UND wir nicht gerade im Fade hängen
+                if (ready && fadeVal >= 1.0 && displayedApp == targetApp) {
+                    autoAppIndex++;
+                    if (autoAppIndex >= configManager.autoMode.apps.size()) autoAppIndex = 0;
+                    targetApp = getAppModeByName(configManager.autoMode.apps[autoAppIndex]);
+                }
+            }
+        }
+        // --------------------------------
+
         bool appChanged = false;
-        bool isFading = false; // <--- NEU: Merker für laufende Überblendung
+        bool isFading = false;
         
+        // --- 3. FADING LOGIK (inkl. Aufwecken der neuen App) ---
         if (displayedApp != targetApp) {
             fadeVal -= fadeStep;
-            isFading = true; // Wir blenden gerade aus
+            isFading = true; 
             if (fadeVal <= 0.0) { 
                 fadeVal = 0.0;
                 displayedApp = targetApp; 
                 appChanged = true;
+                
+                // Timer resetten & neue App aufwecken!
+                autoAppFallbackTimer = millis(); 
+                App* newApp = getAppInstance(displayedApp);
+                if (newApp) newApp->onActive(); 
             }
         } else { 
             if (fadeVal < 1.0) { 
                 fadeVal += fadeStep;
-                isFading = true; // Wir blenden gerade ein
+                isFading = true; 
                 if (fadeVal >= 1.0) {
                     fadeVal = 1.0; 
-                    isFading = false; // Fade beendet
+                    isFading = false; 
                 }
             } 
         }
         display.setAppFade(fadeVal);
-        
+
         if (brightness > 0) {
              // LOGIK: Aufwachen erkennen
              bool justTurnedOn = wasDisplayOff;
