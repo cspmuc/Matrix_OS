@@ -47,6 +47,7 @@ private:
     unsigned long lastWifiCheck = 0;
     unsigned long lastMqttRetry = 0;
     unsigned long lastTimeCheck = 0;
+    int lastSavedBrightness = 150; // <--- NEU: Gedächtnis für die letzte Helligkeit
 
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
@@ -58,8 +59,14 @@ private:
              String msg = "";
              for (int i = 0; i < length; i++) msg += (char)payload[i];
              if (t == "matrix/cmd/power") {
-                if (msg == "OFF") brightnessRef = 0;
-                else if (msg == "ON" && brightnessRef == 0) brightnessRef = 150;
+                if (msg == "OFF") {
+                    if (brightnessRef > 0) lastSavedBrightness = brightnessRef; // <--- NEU: Helligkeit vor dem Ausschalten merken!
+                    brightnessRef = 0;
+                }
+                else if (msg == "ON" && brightnessRef == 0) {
+                    // <--- NEU: Gemerkte Helligkeit wiederherstellen (Fallback auf Config-Startwert)
+                    brightnessRef = (lastSavedBrightness > 0) ? lastSavedBrightness : conf.system.startup_brightness;
+                }
                 publishState();
              }
              delete doc;
@@ -68,8 +75,10 @@ private:
         
         if (t == "matrix/cmd/brightness" && doc->containsKey("val")) {
             brightnessRef = (*doc)["val"].as<int>();
+            if (brightnessRef > 0) lastSavedBrightness = brightnessRef; // <--- NEU: Auch wenn wir dimmen, merken wir uns den neuen Wert
             publishState();
         }
+
         if (t == "matrix/cmd/app" && doc->containsKey("app")) {
             String newApp = (*doc)["app"];
             if (newApp == "wordclock") currentAppRef = WORDCLOCK;
@@ -323,6 +332,7 @@ public:
             case TESTPATTERN: appStr = "testpattern"; break;
             case TICKER:      appStr = "ticker"; break;
             case PLASMA:      appStr = "plasma"; break;
+            case AUTO:        appStr = "auto"; break; // <--- DIESE ZEILE HINZUFÜGEN
             default:          appStr = "off"; break;
         }
         client.publish("matrix/status/app", appStr.c_str(), true);

@@ -41,6 +41,7 @@ struct TimeConfig {
 
 struct SystemConfig {
     String ota_password = "otaflash";
+    int startup_brightness = 150; // <--- NEU: Die Standard-Helligkeit beim Booten
 };
 
 // --- NEU: Konfiguration für den Auto-Modus ---
@@ -113,6 +114,7 @@ public:
         if (doc->containsKey("system")) {
             JsonObject sys = (*doc)["system"];
             system.ota_password = sys["ota_password"] | system.ota_password;
+            system.startup_brightness = sys["startup_brightness"] | system.startup_brightness; // <--- NEU
         }
 
         // --- NEU: Auto-Modus Block einlesen ---

@@ -75,7 +75,10 @@ public:
 
         // 2. Leere Liste
         if (pages.empty()) {
-            cycleComplete = true; // <--- NEU: Sofort weiter, wenn nichts zu sehen ist
+            // NEU: Zeige "No Data" für mindestens 3 Sekunden, anstatt sofort abzubrechen
+            if (now - lastPageSwitch > 3000) {
+                cycleComplete = true; 
+            }
 
             if (force || needsRedraw) {
                 display.clear();

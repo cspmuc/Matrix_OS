@@ -8,10 +8,20 @@ private:
     uint16_t palette[256];
     int timePos1 = 0;
     int timePos2 = 0;
+    unsigned long activeSince = 0; // <--- NEU
 
 public:
     PlasmaApp() {}
+    
+    void onActive() override {
+        activeSince = millis();
+    }
 
+    bool isReadyToSwitch() override {
+        // Plasma soll für 15 Sekunden (15000 ms) laufen
+        return (millis() - activeSince >= 15000);
+    }
+    
     void setupPalette(DisplayManager& display) {
         static bool paletteReady = false;
         if (paletteReady) return;

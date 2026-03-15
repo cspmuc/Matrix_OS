@@ -61,7 +61,7 @@ int overlayBoxY = 0;
 const int frameDelay = 10;
 
 float fadeVal = 1.0;
-const float fadeStep = 0.05; 
+const float fadeStep = 0.1; 
 AppMode displayedApp = WORDCLOCK;
 bool wasOverlayActive = false;
 
@@ -211,6 +211,7 @@ void setup() {
       status("Load Config...", display.color565(255, 255, 0)); 
       configManager.begin();
       if (configManager.autoMode.enabled) currentApp = AUTO;
+      brightness = configManager.system.startup_brightness; // <--- NEU: Helligkeit aus der Config setzen
       status("Load Icons...", display.color565(255, 255, 0)); 
       iconManager.begin();
 }
@@ -297,10 +298,19 @@ void loop() {
             return nullptr;
         };
         // ---------------------------------------------
-
+       // 1. ZUERST die Variablen deklarieren!
         AppMode targetApp = currentApp; 
         static int autoAppIndex = 0;
         static unsigned long autoAppFallbackTimer = 0;
+
+        // 2. DANN den ersten Start initialisieren!
+        static bool firstRun = true;
+        if (firstRun) {
+            firstRun = false;
+            autoAppFallbackTimer = millis();
+            App* firstApp = getAppInstance(displayedApp);
+            if (firstApp) firstApp->onActive(); // Weckt die Wortuhr auf
+        }
 
         // --- 2. AUTO-ROTATION LOGIK ---
         if (currentApp == AUTO) {
