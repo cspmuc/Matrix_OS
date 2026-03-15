@@ -29,9 +29,19 @@ private:
     const int SWITCH_DELAY = 7000; 
 
     bool needsRedraw = true;
+    bool cycleComplete = false; // <--- NEU: Merker für Durchlauf
 
 public:
     SensorApp() { currentPageIt = pages.begin(); }
+
+    void onActive() override {
+        cycleComplete = false;
+        lastPageSwitch = millis(); // Verhindert sofortiges Weiterschalten beim Einblenden
+    }
+
+    bool isReadyToSwitch() override {
+        return cycleComplete; // Wir wechseln erst, wenn die Liste einmal durch ist
+    }
 
     void updatePage(String id, String title, int ttl, const std::vector<SensorItem>& newItems) {
         SensorPage& p = pages[id];
@@ -65,6 +75,8 @@ public:
 
         // 2. Leere Liste
         if (pages.empty()) {
+            cycleComplete = true; // <--- NEU: Sofort weiter, wenn nichts zu sehen ist
+
             if (force || needsRedraw) {
                 display.clear();
                 richText.drawCentered(display, 39, "{c:muted}No Sensor Data", "Small");
@@ -78,7 +90,10 @@ public:
         if (now - lastPageSwitch > SWITCH_DELAY) {
             lastPageSwitch = now;
             currentPageIt++;
-            if (currentPageIt == pages.end()) currentPageIt = pages.begin();
+            if (currentPageIt == pages.end()) {
+                currentPageIt = pages.begin();
+                cycleComplete = true; // <--- NEU: Wir sind einmal komplett durch!
+            }
             needsRedraw = true; 
         }
         if (currentPageIt == pages.end()) currentPageIt = pages.begin();

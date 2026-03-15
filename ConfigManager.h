@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
+#include <vector> // <--- NEU: Für unsere App-Liste
 
 #ifndef SPIRAM_ALLOCATOR_DEFINED
 #define SPIRAM_ALLOCATOR_DEFINED
@@ -35,11 +36,18 @@ struct MqttConfig {
 
 struct TimeConfig {
     String ntp_server = "pool.ntp.org";
-    String timezone = "CET-1CEST,M3.5.0/02:00:00,M10.5.0/03:00:00"; // Sicherer Standard für Deutschland
+    String timezone = "CET-1CEST,M3.5.0/02:00:00,M10.5.0/03:00:00"; 
 };
 
 struct SystemConfig {
     String ota_password = "otaflash";
+};
+
+// --- NEU: Konfiguration für den Auto-Modus ---
+struct AutoConfig {
+    bool enabled = true; // Startet standardmäßig im Auto-Modus
+    int wordclock_duration_sec = 20; // Wie lange die Uhr angezeigt wird
+    std::vector<String> apps = {"wordclock", "sensors", "plasma"}; // Standard-Rotation
 };
 
 // --- 2. Die Manager Klasse ---
@@ -49,6 +57,7 @@ public:
     MqttConfig mqtt;
     TimeConfig time;
     SystemConfig system;
+    AutoConfig autoMode; // <--- NEU: Die Auto-Instanz
 
     void begin() {
         if (!LittleFS.exists("/config.json")) {
@@ -62,7 +71,6 @@ public:
             return;
         }
 
-        // Wir nutzen unseren bewährten PSRAM Allocator, damit der RAM geschont wird!
         SpiRamJsonDocument* doc = new SpiRamJsonDocument(4096);
         DeserializationError error = deserializeJson(*doc, file);
         file.close();
@@ -74,7 +82,7 @@ public:
             return;
         }
 
-        // --- 3. Werte überschreiben (Fallback-Logik durch den '|' Operator) ---
+        // --- 3. Werte überschreiben (Fallback-Logik) ---
         
         if (doc->containsKey("network")) {
             JsonObject net = (*doc)["network"];
@@ -107,7 +115,23 @@ public:
             system.ota_password = sys["ota_password"] | system.ota_password;
         }
 
-        delete doc; // JSON im PSRAM sofort wieder zerstören
+        // --- NEU: Auto-Modus Block einlesen ---
+        if (doc->containsKey("auto")) {
+            JsonObject a = (*doc)["auto"];
+            autoMode.enabled = a["enabled"] | autoMode.enabled;
+            autoMode.wordclock_duration_sec = a["wordclock_duration_sec"] | autoMode.wordclock_duration_sec;
+            
+            // Wenn eine App-Liste im JSON steht, leeren wir den Standard und füllen neu auf
+            if (a.containsKey("apps") && a["apps"].is<JsonArray>()) {
+                autoMode.apps.clear(); 
+                JsonArray jsonApps = a["apps"].as<JsonArray>();
+                for (JsonVariant app : jsonApps) {
+                    autoMode.apps.push_back(app.as<String>());
+                }
+            }
+        }
+
+        delete doc; 
         Serial.println("ConfigManager: config.json erfolgreich in den RAM geladen.");
     }
 };

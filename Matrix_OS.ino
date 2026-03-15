@@ -86,7 +86,7 @@ if (isBooting) {
 if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
       
       display.clear(); 
-      display.setFade(1.0); 
+      display.setAppFade(1.0);
       display.setTextSize(1); 
       display.setFont(NULL); 
       
@@ -210,6 +210,7 @@ void setup() {
 } else { 
       status("Load Config...", display.color565(255, 255, 0)); 
       configManager.begin();
+      if (configManager.autoMode.enabled) currentApp = AUTO;
       status("Load Icons...", display.color565(255, 255, 0)); 
       iconManager.begin();
 }
@@ -277,9 +278,11 @@ void loop() {
         display.setBrightness(brightness);
         AppMode targetApp = currentApp; 
         bool appChanged = false;
+        bool isFading = false; // <--- NEU: Merker für laufende Überblendung
         
         if (displayedApp != targetApp) {
             fadeVal -= fadeStep;
+            isFading = true; // Wir blenden gerade aus
             if (fadeVal <= 0.0) { 
                 fadeVal = 0.0;
                 displayedApp = targetApp; 
@@ -288,18 +291,26 @@ void loop() {
         } else { 
             if (fadeVal < 1.0) { 
                 fadeVal += fadeStep;
-                if (fadeVal > 1.0) fadeVal = 1.0; 
+                isFading = true; // Wir blenden gerade ein
+                if (fadeVal >= 1.0) {
+                    fadeVal = 1.0; 
+                    isFading = false; // Fade beendet
+                }
             } 
         }
-        display.setFade(fadeVal);
+        display.setAppFade(fadeVal);
+        
         if (brightness > 0) {
              // LOGIK: Aufwachen erkennen
              bool justTurnedOn = wasDisplayOff;
              wasDisplayOff = false;
 
              bool overlayPending = !overlayQueue.empty();
-             // FORCE REDRAW auch bei justTurnedOn!
-             bool forceRedraw = appChanged || isOverlayActive || overlayPending || (wasOverlayActive && !isOverlayActive) || justTurnedOn;
+             
+             // --- NEU: isFading zur forceRedraw Logik hinzugefügt ---
+             bool forceRedraw = appChanged || isOverlayActive ||
+                                overlayPending || (wasOverlayActive && !isOverlayActive) || justTurnedOn || isFading;
+             
              bool screenUpdated = false;
              switch(displayedApp) {
                case WORDCLOCK:   screenUpdated = appWordClock.draw(display, forceRedraw);
@@ -312,6 +323,7 @@ void loop() {
              }
              
              if (isOverlayActive || overlayPending) { 
+                 display.setAppFade(1.0);
                  processAndDrawOverlay(display);
                  if (isOverlayActive) screenUpdated = true;
              }

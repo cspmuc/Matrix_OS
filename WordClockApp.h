@@ -2,6 +2,9 @@
 #include "App.h"
 #include "RichText.h" 
 #include <time.h>
+#include "ConfigManager.h" // <--- NEU
+
+extern ConfigManager configManager; // <--- NEU: Zugriff auf die Konfiguration
 
 class WordClockApp : public App {
 private:
@@ -27,6 +30,7 @@ private:
     const String cDim = "{c:silver}"; 
     const String cHigh = "{c:gold}";  
     const String tagBold = "{b}"; 
+    unsigned long activeSince = 0; // <--- NEU: Timer für Auto-Modus
 
     void updateClockText(int h, int m) {
         int mR = (m / 5) * 5; 
@@ -59,6 +63,16 @@ private:
     }
 
 public:
+    // --- NEU: Auto-Modus Steuerung ---
+    void onActive() override {
+        activeSince = millis(); // Stoppuhr starten, wenn wir auf dem Display erscheinen
+    }
+
+    bool isReadyToSwitch() override {
+        unsigned long durationMs = configManager.autoMode.wordclock_duration_sec * 1000;
+        return (millis() - activeSince >= durationMs);
+    }
+
     bool draw(DisplayManager& display, bool force) override {
         unsigned long now = millis();
 

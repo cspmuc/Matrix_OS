@@ -78,6 +78,7 @@ private:
             else if (newApp == "ticker") currentAppRef = TICKER;
             else if (newApp == "plasma") currentAppRef = PLASMA;
             else if (newApp == "off") currentAppRef = OFF;
+            else if (newApp == "auto") currentAppRef = AUTO; // <--- DIESE ZEILE HINZUFÜGEN!
             publishState(); 
         }     
         if (t == "matrix/cmd/overlay") {
@@ -204,7 +205,7 @@ public:
         ArduinoOTA.setPassword(conf.system.ota_password.c_str());
 
         ArduinoOTA.onStart([this]() { 
-            displayRef.setFade(1.0);
+            displayRef.setAppFade(1.0);
             displayRef.clear();
             displayRef.setTextColor(displayRef.color565(255, 255, 0)); 
             displayRef.printCentered("UPDATE", 32);

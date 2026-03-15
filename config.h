@@ -23,7 +23,7 @@
 #define OE_PIN  14
 
 // --- APP DEFINITIONEN ---
-enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, OFF };
+enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, OFF, AUTO };
 
 extern AppMode currentApp;
 extern int brightness;
