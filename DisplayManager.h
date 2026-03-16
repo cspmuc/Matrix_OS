@@ -8,20 +8,24 @@
 class PSRAMCanvas16 : public Adafruit_GFX {
 private:
     uint16_t *buffer;
-    float currentFade = 1.0; // NEU: Speichert den aktuellen Software-Fade-Wert
+    uint32_t fadeInt = 256; // NEU: High-Speed Integer-Multiplikator (0 bis 256) statt Float
 
-    // NEU: Berechnet den abgedunkelten RGB565 Farbwert
+    // NEU: Super-schnelle Ganzzahl-Mathematik mit Bitshifting
     uint16_t applyFade(uint16_t color) {
-        if (currentFade >= 1.0) return color;
-        if (currentFade <= 0.0) return 0;
+        // Wenn volle Helligkeit, spare dir jegliche Mathematik!
+        if (fadeInt >= 256) return color;
+        // Wenn unsichtbar, mach es direkt schwarz!
+        if (fadeInt == 0) return 0;
         
-        uint16_t r = (color >> 11) & 0x1F;
-        uint16_t g = (color >> 5) & 0x3F;
-        uint16_t b = color & 0x1F;
+        // Farben isolieren
+        uint32_t r = (color >> 11) & 0x1F;
+        uint32_t g = (color >> 5) & 0x3F;
+        uint32_t b = color & 0x1F;
         
-        r = (uint16_t)(r * currentFade);
-        g = (uint16_t)(g * currentFade);
-        b = (uint16_t)(b * currentFade);
+        // Schnelle Ganzzahl-Multiplikation und Bitshift (entspricht exakt / 256)
+        r = (r * fadeInt) >> 8;
+        g = (g * fadeInt) >> 8;
+        b = (b * fadeInt) >> 8;
         
         return (r << 11) | (g << 5) | b;
     }
@@ -35,13 +39,16 @@ public:
     }
     uint16_t* getBuffer() { return buffer; }
     
-    // NEU: Setzt den Fade-Level für alle künftigen Zeichenoperationen
-    void setAppFade(float f) { currentFade = f; }
+    // NEU: Der Float-Wert wird nur noch 1x pro Frame in einen Integer übersetzt!
+    void setAppFade(float f) { 
+        fadeInt = (uint32_t)(f * 256.0f);
+        if (fadeInt > 256) fadeInt = 256;
+    }
     
     // --- Überschriebene Zeichenfunktionen (inkl. Fade) ---
     void drawPixel(int16_t x, int16_t y, uint16_t color) override {
         if (x < 0 || y < 0 || x >= _width || y >= _height) return;
-        buffer[y * _width + x] = applyFade(color); // Farbe wird vor dem Zeichnen abgedunkelt!
+        buffer[y * _width + x] = applyFade(color); 
     }
     
     void fillScreen(uint16_t color) override {

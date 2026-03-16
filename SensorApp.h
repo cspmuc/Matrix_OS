@@ -37,6 +37,10 @@ public:
     void onActive() override {
         cycleComplete = false;
         lastPageSwitch = millis(); // Verhindert sofortiges Weiterschalten beim Einblenden
+        if (!pages.empty()) {
+            currentPageIt = pages.begin(); // <--- NEU: Setzt die Liste beim Einblenden wieder auf den Anfang
+        }
+        needsRedraw = true;
     }
 
     bool isReadyToSwitch() override {
@@ -91,15 +95,26 @@ public:
 
         // 3. Seitenwechsel
         if (now - lastPageSwitch > SWITCH_DELAY) {
-            lastPageSwitch = now;
-            currentPageIt++;
-            if (currentPageIt == pages.end()) {
-                currentPageIt = pages.begin();
-                cycleComplete = true; // <--- NEU: Wir sind einmal komplett durch!
+            if (cycleComplete && currentApp == AUTO) {
+                // AUTO-MODUS: Wir sind am Ende und warten auf den Fade. 
+                // Nichts tun, letztes Bild einfach einfrieren!
+            } else {
+                lastPageSwitch = now;
+                currentPageIt++;
+                
+                if (currentPageIt == pages.end()) {
+                    cycleComplete = true; // Wir sind einmal komplett durch!
+                    
+                    if (currentApp == AUTO) {
+                        currentPageIt--; // Gehe einen Schritt zurück (auf die letzte Seite) und bleibe dort für den Fade
+                    } else {
+                        currentPageIt = pages.begin(); // Manueller Modus: Endlos vorne wieder anfangen
+                    }
+                }
+                needsRedraw = true; 
             }
-            needsRedraw = true; 
         }
-        if (currentPageIt == pages.end()) currentPageIt = pages.begin();
+        if (currentPageIt == pages.end()) currentPageIt = pages.begin(); // Fallback Sicherheit
 
         // --- NEU: Animations-Check ---
         // Wir prüfen, ob die aktuell angezeigte Seite ein animiertes Icon ("la:") enthält.
