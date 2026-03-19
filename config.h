@@ -25,5 +25,8 @@
 // --- APP DEFINITIONEN ---
 enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, OFF, AUTO };
 
+// --- OVERLAY DEFINITIONEN (NEU) ---
+enum OverlayType { OVL_TEXT, OVL_ANIM_GHOST };
+
 extern AppMode currentApp;
 extern int brightness;

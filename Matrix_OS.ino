@@ -39,15 +39,22 @@ bool isBooting = true;
 struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
-// NEU: bool isUrgent am Ende der Struktur
-struct OverlayMessage { String text; int durationSec; String colorName; int scrollSpeed; bool isUrgent; };
+
+struct OverlayMessage { 
+    OverlayType type; // <--- NEU: Text oder Animation?
+    String text; 
+    int durationSec; 
+    String colorName; 
+    int scrollSpeed; 
+    bool isUrgent;
+};
+
 std::deque<OverlayMessage> overlayQueue;
 bool isOverlayActive = false;
 unsigned long overlayStartTime = 0;
 unsigned long overlayEndTime = 0;
 OverlayMessage currentOverlay;
 
-// --- NEU: Globale Variablen für flüssiges Integer-Stepping ---
 int overlayScrollX = 0;
 unsigned long overlayLastScrollStep = 0;
 int overlayTextWidth = 0;
@@ -55,11 +62,8 @@ int overlayBoxWidth = 0;
 bool overlayIsScrolling = false;
 int overlayBoxX = 0;
 int overlayBoxY = 0;
-// -------------------------------------------------------------
 
-// TUNING: 10ms = 100 FPS für flüssigere Animationen
 const int frameDelay = 10;
-
 float fadeVal = 1.0;
 const float fadeStep = 0.1; 
 AppMode displayedApp = WORDCLOCK;
@@ -67,15 +71,19 @@ bool wasOverlayActive = false;
 
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
     Serial.print("Overlay Queued: "); Serial.println(msg);
-    // NEU: false für normale Nachrichten
-    if (overlayQueue.size() < 5) overlayQueue.push_back({msg, durationSec, colorName, scrollSpeed, false});
+    if (overlayQueue.size() < 5) overlayQueue.push_back({OVL_TEXT, msg, durationSec, colorName, scrollSpeed, false});
 }
 
 void forceOverlay(String msg, int durationSec, String colorName) {
     overlayQueue.clear();
-    isOverlayActive = false; 
-    // NEU: true für Urgent Nachrichten
-    overlayQueue.push_back({msg, durationSec, colorName, 0, true});
+    isOverlayActive = false;
+    overlayQueue.push_back({OVL_TEXT, msg, durationSec, colorName, 0, true});
+}
+
+// --- NEU: Queue-Helper für Animationen ---
+void queueAnimation(OverlayType animType, int durationSec) {
+    Serial.println("Animation Queued");
+    if (overlayQueue.size() < 5) overlayQueue.push_back({animType, "", durationSec, "", 0, false});
 }
 
 void status(const String& msg, uint16_t color = 0xFFFF) {
@@ -118,84 +126,106 @@ void processAndDrawOverlay(DisplayManager& display) {
         isOverlayActive = true; 
         overlayStartTime = now; 
         overlayEndTime = now + (currentOverlay.durationSec * 1000);
-        Serial.println("Overlay Started: " + currentOverlay.text);
-
-        // --- Layout Berechnung (Nur 1x beim Start) ---
-        String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
-        overlayTextWidth = richTextOverlay.getTextWidth(display, finalMsg, "Medium");
         
-        int boxH = 34;
-        overlayBoxWidth = 104; 
-        overlayIsScrolling = false;
-        
-        if (overlayTextWidth > (overlayBoxWidth - 10)) { 
-            overlayBoxWidth = M_WIDTH; 
-            overlayIsScrolling = true; 
+        if (currentOverlay.type == OVL_TEXT) {
+            Serial.println("Overlay Started: " + currentOverlay.text);
+            String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
+            overlayTextWidth = richTextOverlay.getTextWidth(display, finalMsg, "Medium");
+            
+            int boxH = 34;
+            overlayBoxWidth = 104; 
+            overlayIsScrolling = false;
+            if (overlayTextWidth > (overlayBoxWidth - 10)) { 
+                overlayBoxWidth = M_WIDTH;
+                overlayIsScrolling = true; 
+            }
+            
+            overlayBoxX = (M_WIDTH - overlayBoxWidth) / 2;
+            overlayBoxY = (M_HEIGHT - boxH) / 2;
+            overlayScrollX = overlayBoxX + overlayBoxWidth;
+            overlayLastScrollStep = now;
         }
-        
-        overlayBoxX = (M_WIDTH - overlayBoxWidth) / 2;
-        overlayBoxY = (M_HEIGHT - boxH) / 2;
-
-        // Startposition für Scrolltext (Rechts vom Rahmen)
-        overlayScrollX = overlayBoxX + overlayBoxWidth; 
-        overlayLastScrollStep = now;
     }
     
     // ZEICHNEN
     if (isOverlayActive) {
-        String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
-        int boxH = 34;
+        if (currentOverlay.type == OVL_TEXT) {
+            // --- STANDARD TEXT OVERLAY ---
+            String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
+            int boxH = 34;
 
-        display.dimRect(overlayBoxX, overlayBoxY, overlayBoxWidth, boxH); 
-        
-        // Rahmenfarbe basierend auf Dringlichkeit
-        uint16_t borderColor = display.color565(80, 80, 80); // Standard Grau
-        if (currentOverlay.isUrgent) {
-            borderColor = display.color565(255, 100, 0); // Dunkelorange
-        }
-        display.drawRect(overlayBoxX, overlayBoxY, overlayBoxWidth, boxH, borderColor);
-        
-        int textY = overlayBoxY + (boxH / 2) + 5;
-
-        if (!overlayIsScrolling) { 
-            // Statischer Text (Zentriert)
-            richTextOverlay.drawCentered(display, textY, finalMsg, "Medium");
-        } else {
-            // SCROLLING (Integer Stepping Logic)
-            int speed = currentOverlay.scrollSpeed;
-            if (speed < 1) speed = 30; 
+            display.dimRect(overlayBoxX, overlayBoxY, overlayBoxWidth, boxH); 
             
-            // Verzögerung pro Pixel berechnen (z.B. 30px/s -> 33ms pro Schritt)
-            int stepDelay = 1000 / speed;
+            uint16_t borderColor = display.color565(80, 80, 80);
+            if (currentOverlay.isUrgent) borderColor = display.color565(255, 100, 0);
+            display.drawRect(overlayBoxX, overlayBoxY, overlayBoxWidth, boxH, borderColor);
             
-            // Zeit prüfen und Pixel weiterschalten
-            if (now - overlayLastScrollStep >= stepDelay) {
-                overlayScrollX--; 
-                overlayLastScrollStep = now;
-                
-                // Reset Logik: Wenn Text ganz links raus ist
-                int startX = overlayBoxX + overlayBoxWidth;
-                int totalDist = overlayBoxWidth + overlayTextWidth + 20; // +Buffer
-                
-                if (overlayScrollX < (startX - totalDist)) {
-                    overlayScrollX = startX;
+            int textY = overlayBoxY + (boxH / 2) + 5;
+            if (!overlayIsScrolling) { 
+                richTextOverlay.drawCentered(display, textY, finalMsg, "Medium");
+            } else {
+                int speed = currentOverlay.scrollSpeed;
+                if (speed < 1) speed = 30; 
+                int stepDelay = 1000 / speed;
+                if (now - overlayLastScrollStep >= stepDelay) {
+                    overlayScrollX--;
+                    overlayLastScrollStep = now;
+                    int startX = overlayBoxX + overlayBoxWidth;
+                    int totalDist = overlayBoxWidth + overlayTextWidth + 20; 
+                    if (overlayScrollX < (startX - totalDist)) overlayScrollX = startX;
                 }
+                richTextOverlay.drawString(display, overlayScrollX, textY, finalMsg, "Medium");
             }
             
-            // Zeichnen an der exakten Integer-Position (Kein Aliasing mehr!)
-            richTextOverlay.drawString(display, overlayScrollX, textY, finalMsg, "Medium");
-        }
-        
-        // Fortschrittsbalken
-        int totalDur = currentOverlay.durationSec * 1000;
-        long remaining = overlayEndTime - now;
-        if (remaining > 0) {
-            int barWidth = map(remaining, 0, totalDur, 0, overlayBoxWidth - 2);
-            display.drawFastHLine(overlayBoxX + 1, overlayBoxY + boxH - 2, barWidth, display.color565(200, 200, 200));
+            int totalDur = currentOverlay.durationSec * 1000;
+            long remaining = overlayEndTime - now;
+            if (remaining > 0) {
+                int barWidth = map(remaining, 0, totalDur, 0, overlayBoxWidth - 2);
+                display.drawFastHLine(overlayBoxX + 1, overlayBoxY + boxH - 2, barWidth, display.color565(200, 200, 200));
+            }
+        } 
+        else if (currentOverlay.type == OVL_ANIM_GHOST) {
+            // --- NEU: GHOST EYES ANIMATION ---
+            // Vollbild doppelt abdunkeln für den schummrigen Grusel-Effekt
+            display.dimRect(0, 0, M_WIDTH, M_HEIGHT);
+            display.dimRect(0, 0, M_WIDTH, M_HEIGHT);
+            
+            unsigned long elapsed = now - overlayStartTime;
+            int totalDur = currentOverlay.durationSec * 1000;
+            
+            uint16_t eyeColor = display.color565(255, 255, 255);
+            // Simulierter Fade-In / Fade-Out der weißen Augen
+            if (elapsed < 300 || elapsed > totalDur - 300) {
+                eyeColor = display.color565(80, 80, 80); 
+            }
+            
+            int leftEyeX = M_WIDTH / 2 - 16;
+            int rightEyeX = M_WIDTH / 2 + 16;
+            int eyeY = M_HEIGHT / 2 - 2;
+            
+            int pupilleOffsetX = 0;
+            bool isBlinking = false;
+            
+            // Die Timeline (Das Drehbuch)
+            if (elapsed >= 600 && elapsed < 1300) pupilleOffsetX = -5;      // Schaut nach Links
+            else if (elapsed >= 1300 && elapsed < 2000) pupilleOffsetX = 5; // Schaut nach Rechts
+            else if (elapsed >= 2000 && elapsed < 2200) isBlinking = true;  // Kurzes Blinzeln
+            
+            if (!isBlinking) {
+                // Weiße Augäpfel
+                display.fillCircle(leftEyeX, eyeY, 8, eyeColor);
+                display.fillCircle(rightEyeX, eyeY, 8, eyeColor);
+                // Schwarze Pupillen
+                display.fillCircle(leftEyeX + pupilleOffsetX, eyeY, 3, 0x0000);
+                display.fillCircle(rightEyeX + pupilleOffsetX, eyeY, 3, 0x0000);
+            } else {
+                // Zugekniffene Augen (einfache Striche)
+                display.drawFastHLine(leftEyeX - 6, eyeY, 12, eyeColor);
+                display.drawFastHLine(rightEyeX - 6, eyeY, 12, eyeColor);
+            }
         }
     }
 }
-
 void setup() {
   Serial.begin(115200);
   

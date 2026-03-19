@@ -14,6 +14,7 @@
 extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
 extern void forceOverlay(String msg, int durationSec, String colorName);
+extern void queueAnimation(OverlayType animType, int durationSec); // <--- NEU
 
 // Eigener Allocator für ArduinoJson, der den PSRAM zwingend nutzt
 #ifndef SPIRAM_ALLOCATOR_DEFINED
@@ -107,6 +108,15 @@ private:
                  }
              }
         }
+        // --- NEU: Animations Command ---
+        if (t == "matrix/cmd/animation" && doc->containsKey("anim")) {
+            String anim = (*doc)["anim"];
+            int dur = (*doc)["duration"] | 3; // Standard: 3 Sekunden
+            if (anim == "ghost_eyes") {
+                queueAnimation(OVL_ANIM_GHOST, dur);
+            }
+        }
+        // -------------------------------
         if (t == "matrix/cmd/sensor_page") {
             String id = (*doc)["id"] | "default";
             String title = (*doc)["title"] | "INFO";
