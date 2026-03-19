@@ -186,42 +186,49 @@ void processAndDrawOverlay(DisplayManager& display) {
         } 
         else if (currentOverlay.type == OVL_ANIM_GHOST) {
             // --- NEU: GHOST EYES ANIMATION ---
-            // Vollbild doppelt abdunkeln für den schummrigen Grusel-Effekt
-            display.dimRect(0, 0, M_WIDTH, M_HEIGHT);
+            // Nur noch 1x abdunkeln für einen etwas helleren Hintergrund
             display.dimRect(0, 0, M_WIDTH, M_HEIGHT);
             
             unsigned long elapsed = now - overlayStartTime;
             int totalDur = currentOverlay.durationSec * 1000;
             
-            uint16_t eyeColor = display.color565(255, 255, 255);
-            // Simulierter Fade-In / Fade-Out der weißen Augen
-            if (elapsed < 300 || elapsed > totalDur - 300) {
-                eyeColor = display.color565(80, 80, 80); 
+            // Smarter Fade-In / Fade-Out mit butterweichen 255 Stufen!
+            int eyeBright = 255;
+            if (elapsed < 300) {
+                eyeBright = map(elapsed, 0, 300, 0, 255); // Einblenden in den ersten 300ms
+            } else if (elapsed > totalDur - 300) {
+                eyeBright = map(totalDur - elapsed, 0, 300, 0, 255); // Ausblenden in den letzten 300ms
             }
             
-            int leftEyeX = M_WIDTH / 2 - 16;
-            int rightEyeX = M_WIDTH / 2 + 16;
+            // Sicherstellen, dass der Wert nicht überläuft, und RGB Farbe mischen
+            eyeBright = constrain(eyeBright, 0, 255);
+            uint16_t eyeColor = display.color565(eyeBright, eyeBright, eyeBright);
+            
+            // Etwas enger zusammen für ovale Augen
+            int leftEyeX = M_WIDTH / 2 - 14; 
+            int rightEyeX = M_WIDTH / 2 + 14;
             int eyeY = M_HEIGHT / 2 - 2;
             
             int pupilleOffsetX = 0;
             bool isBlinking = false;
             
             // Die Timeline (Das Drehbuch)
-            if (elapsed >= 600 && elapsed < 1300) pupilleOffsetX = -5;      // Schaut nach Links
-            else if (elapsed >= 1300 && elapsed < 2000) pupilleOffsetX = 5; // Schaut nach Rechts
+            if (elapsed >= 600 && elapsed < 1300) pupilleOffsetX = -4;      // Blick Links
+            else if (elapsed >= 1300 && elapsed < 2000) pupilleOffsetX = 4; // Blick Rechts
             else if (elapsed >= 2000 && elapsed < 2200) isBlinking = true;  // Kurzes Blinzeln
             
             if (!isBlinking) {
-                // Weiße Augäpfel
-                display.fillCircle(leftEyeX, eyeY, 8, eyeColor);
-                display.fillCircle(rightEyeX, eyeY, 8, eyeColor);
-                // Schwarze Pupillen
-                display.fillCircle(leftEyeX + pupilleOffsetX, eyeY, 3, 0x0000);
-                display.fillCircle(rightEyeX + pupilleOffsetX, eyeY, 3, 0x0000);
+                // Weiße Augäpfel als Ellipsen (Breite: 6, Höhe: 10)
+                display.fillEllipse(leftEyeX, eyeY, 6, 10, eyeColor);
+                display.fillEllipse(rightEyeX, eyeY, 6, 10, eyeColor);
+                
+                // Schwarze Pupillen (Bleiben Kreise, aber etwas kleiner)
+                display.fillCircle(leftEyeX + pupilleOffsetX, eyeY, 2, 0x0000);
+                display.fillCircle(rightEyeX + pupilleOffsetX, eyeY, 2, 0x0000);
             } else {
-                // Zugekniffene Augen (einfache Striche)
-                display.drawFastHLine(leftEyeX - 6, eyeY, 12, eyeColor);
-                display.drawFastHLine(rightEyeX - 6, eyeY, 12, eyeColor);
+                // Zugekniffene Augen (einfache Striche, passend zur Breite der Ellipsen)
+                display.drawFastHLine(leftEyeX - 5, eyeY, 11, eyeColor);
+                display.drawFastHLine(rightEyeX - 5, eyeY, 11, eyeColor);
             }
         }
     }
