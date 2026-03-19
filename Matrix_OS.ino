@@ -340,7 +340,7 @@ void loop() {
         bool appChanged = false;
         bool isFading = false;
         
-        // --- 3. FADING LOGIK (inkl. Aufwecken der neuen App) ---
+// --- 3. FADING LOGIK (inkl. Aufwecken der neuen App) ---
         if (displayedApp != targetApp) {
             fadeVal -= fadeStep;
             isFading = true; 
@@ -360,9 +360,13 @@ void loop() {
                 isFading = true; 
                 if (fadeVal >= 1.0) {
                     fadeVal = 1.0; 
-                    isFading = false; 
+                    // WICHTIG: Wir lassen isFading für DIESEN Frame noch auf true!
+                    // So wird das 100% Bild noch garantiert einmal gezeichnet.
                 }
-            } 
+            } else {
+                // Erst im Frame DANACH beenden wir den Fading-Zustand komplett.
+                isFading = false;
+            }
         }
         display.setAppFade(fadeVal);
 
