@@ -68,8 +68,10 @@ public:
         activeSince = millis(); // Stoppuhr starten, wenn wir auf dem Display erscheinen
     }
 
-    bool isReadyToSwitch() override {
-        unsigned long durationMs = configManager.autoMode.wordclock_duration_sec * 1000;
+// NEU: Signatur und Zeit-Modifikator
+    bool isReadyToSwitch(float durationMultiplier = 1.0) override {
+        // Dauer wird mit dem Faktor multipliziert!
+        unsigned long durationMs = (configManager.autoMode.wordclock_duration_sec * 1000) * durationMultiplier;
         return (millis() - activeSince >= durationMs);
     }
 

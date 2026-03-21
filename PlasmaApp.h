@@ -17,9 +17,11 @@ public:
         activeSince = millis();
     }
 
-    bool isReadyToSwitch() override {
-        // Plasma soll für 15 Sekunden (15000 ms) laufen
-        return (millis() - activeSince >= 15000);
+// NEU: Signatur und Zeit-Modifikator
+    bool isReadyToSwitch(float durationMultiplier = 1.0) override {
+        // Plasma Dauer (15s) wird mit dem Faktor multipliziert!
+        unsigned long durationMs = 15000 * durationMultiplier;
+        return (millis() - activeSince >= durationMs);
     }
     
     void setupPalette(DisplayManager& display) {

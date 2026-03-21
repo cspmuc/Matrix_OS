@@ -8,10 +8,13 @@ public:
     // Zeichnet das Bild. True = hat sich geändert, False = statisch
     virtual bool draw(DisplayManager& display, bool force) = 0;
 
-    // --- NEU FÜR AUTO-MODUS ---
     // Wird aufgerufen, wenn die App in den Vordergrund wechselt
     virtual void onActive() {} 
     
-    // Gibt dem Auto-Modus das Signal: "Meine Show ist fertig, du darfst wechseln!"
-    virtual bool isReadyToSwitch() { return false; }
+    // NEU: Gibt dem Auto-Modus das Signal zum Wechseln. 
+    // Empfängt einen Multiplikator (z.B. 0.4 für 40% der Zeit)
+    virtual bool isReadyToSwitch(float durationMultiplier = 1.0) { return false; }
+
+    // NEU: Globale Prio-Abfrage. Jede Standard-App hat Prio 3 (Normal).
+    virtual int getPriority() { return 3; }
 };

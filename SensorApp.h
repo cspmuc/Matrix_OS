@@ -17,6 +17,7 @@ struct SensorPage {
     int layoutType;
     unsigned long ttl; 
     unsigned long lastReceived;
+    int priority; // <--- NEU: Prio der Seite
     std::vector<SensorItem> items;
 };
 
@@ -36,20 +37,35 @@ public:
 
     void onActive() override {
         cycleComplete = false;
-        lastPageSwitch = millis(); // Verhindert sofortiges Weiterschalten beim Einblenden
+        lastPageSwitch = millis();
         if (!pages.empty()) {
-            currentPageIt = pages.begin(); // <--- NEU: Setzt die Liste beim Einblenden wieder auf den Anfang
+            currentPageIt = pages.begin(); 
         }
         needsRedraw = true;
     }
 
-    bool isReadyToSwitch() override {
-        return cycleComplete; // Wir wechseln erst, wenn die Liste einmal durch ist
+    // NEU: Der Prio-Scanner für die Sensor-App
+    int getPriority() override {
+        if (pages.empty()) return 3; // Nichts da -> Normal
+        
+        int highestPrio = 3;
+        for (auto const& [id, page] : pages) {
+            if (page.priority < highestPrio) {
+                highestPrio = page.priority; // Niedrigere Zahl = Höhere Prio
+            }
+        }
+        return highestPrio;
     }
 
-    void updatePage(String id, String title, int ttl, const std::vector<SensorItem>& newItems) {
+    // NEU: Parameter für Signatur-Übereinstimmung hinzugefügt
+    bool isReadyToSwitch(float durationMultiplier = 1.0) override {
+        return cycleComplete; // Sensoren ignorieren den Zeit-Faktor
+    }
+
+    // NEU: Parameter int priority hinzugefügt
+    void updatePage(String id, String title, int ttl, int priority, const std::vector<SensorItem>& newItems) {
         SensorPage& p = pages[id];
-        p.title = title; p.ttl = ttl; p.items = newItems; p.lastReceived = millis();
+        p.title = title; p.ttl = ttl; p.priority = priority; p.items = newItems; p.lastReceived = millis();
         if (newItems.size() == 1) p.layoutType = 1; 
         else if (newItems.size() == 2) p.layoutType = 2; 
         else p.layoutType = 4; 
@@ -142,19 +158,33 @@ public:
             drawPage(display, currentPageIt->second);
         }
         
-        // Page Indicators
+// Page Indicators
         if (pages.size() > 1) {
             int totalW = pages.size() * 4; 
             int startX = (M_WIDTH - totalW) / 2;
             int idx = 0;
             for(auto pIt = pages.begin(); pIt != pages.end(); ++pIt) {
-                uint16_t c = (pIt == currentPageIt) ? COL_WHITE : display.color565(50,50,50);
+                bool isActive = (pIt == currentPageIt);
+                int prio = pIt->second.priority; // Holt sich die Prio der jeweiligen Seite
+                uint16_t c;
+                
+                if (prio == 1) {
+                    // Prio 1: Rot
+                    c = isActive ? display.color565(255, 0, 0) : display.color565(80, 0, 0);
+                } else if (prio == 2) {
+                    // Prio 2: Ocker (Orange/Gold)
+                    c = isActive ? display.color565(255, 170, 0) : display.color565(80, 50, 0);
+                } else {
+                    // Prio 3 (Normal): Weiß / Dunkelgrau
+                    c = isActive ? display.color565(255, 255, 255) : display.color565(50, 50, 50);
+                }
+                
                 display.drawPixel(startX + (idx * 4), 63, c);
                 display.drawPixel(startX + (idx * 4) + 1, 63, c);
                 idx++;
             }
         }
-        
+                
         needsRedraw = false;
         return true;
     }

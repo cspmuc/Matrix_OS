@@ -349,7 +349,7 @@ void loop() {
             if (firstApp) firstApp->onActive(); // Weckt die Wortuhr auf
         }
 
-        // --- 2. AUTO-ROTATION LOGIK ---
+// --- 2. AUTO-ROTATION LOGIK ---
         if (currentApp == AUTO) {
             if (configManager.autoMode.apps.empty()) {
                 targetApp = WORDCLOCK; // Fallback, falls die Config leer ist
@@ -360,9 +360,36 @@ void loop() {
                 App* runningApp = getAppInstance(displayedApp);
                 unsigned long activeTime = millis() - autoAppFallbackTimer;
                 
+                // --- NEU: Der 1-Sekunden Prio-Scanner ---
+                static unsigned long lastPrioScan = 0;
+                static float currentDurationMultiplier = 1.0;
+                
+                if (millis() - lastPrioScan > 1000) {
+                    lastPrioScan = millis();
+                    int highestSystemPrio = 3;
+                    
+                    // Wir scannen nur die Apps, die auch in der Auto-Rotation sind!
+                    for (const String& appName : configManager.autoMode.apps) {
+                        App* app = getAppInstance(getAppModeByName(appName));
+                        if (app) {
+                            int p = app->getPriority();
+                            if (p < highestSystemPrio) highestSystemPrio = p;
+                        }
+                    }
+                    
+                    // Multiplikator setzen (1 = 40%, 2 = 60%, 3 = 100%)
+                    if (highestSystemPrio == 1) currentDurationMultiplier = 0.4;
+                    else if (highestSystemPrio == 2) currentDurationMultiplier = 0.6;
+                    else currentDurationMultiplier = 1.0;
+                }
+                // ----------------------------------------
+                
                 bool ready = false;
-                if (runningApp) ready = runningApp->isReadyToSwitch();
-                if (activeTime > 60000) ready = true; // Fallback: Spätestens nach 60s hart wechseln
+                // Faktor an die App übergeben!
+                if (runningApp) ready = runningApp->isReadyToSwitch(currentDurationMultiplier); 
+                
+                // Fallback-Timer (60s) bekommt ebenfalls den Faktor
+                if (activeTime > (60000 * currentDurationMultiplier)) ready = true; 
                 
                 // Wir wechseln nur, wenn die App fertig ist UND wir nicht gerade im Fade hängen
                 if (ready && fadeVal >= 1.0 && displayedApp == targetApp) {
@@ -373,7 +400,7 @@ void loop() {
             }
         }
         // --------------------------------
-
+        
         bool appChanged = false;
         bool isFading = false;
         

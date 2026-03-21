@@ -121,6 +121,8 @@ private:
             String id = (*doc)["id"] | "default";
             String title = (*doc)["title"] | "INFO";
             int ttl = (*doc)["ttl"] | 60; 
+            int prio = (*doc)["priority"] | 3; // <--- NEU: Prio auslesen (Standard: 3)
+            
             std::vector<SensorItem> items;
             JsonArray jsonItems = (*doc)["items"].as<JsonArray>();
             for (JsonObject item : jsonItems) {
@@ -130,7 +132,8 @@ private:
                 si.color = item["color"] | "white";
                 items.push_back(si);
             }
-            if (!items.empty()) sensorAppRef.updatePage(id, title, ttl, items);
+            // NEU: Prio Parameter übergeben
+            if (!items.empty()) sensorAppRef.updatePage(id, title, ttl, prio, items);
         }
         delete doc;
     }
