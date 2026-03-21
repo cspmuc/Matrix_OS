@@ -109,8 +109,18 @@ public:
             return false;
         }
 
+// --- Dynamische Anzeigedauer berechnen ---
+        unsigned long currentDelay = SWITCH_DELAY;
+        if (currentPageIt != pages.end()) {
+            if (currentPageIt->second.priority == 1) {
+                currentDelay = SWITCH_DELAY * 2.0; // Prio 1: 100% länger (doppelte Zeit)
+            } else if (currentPageIt->second.priority == 2) {
+                currentDelay = SWITCH_DELAY * 1.5; // Prio 2: 50% länger
+            }
+        }
+
         // 3. Seitenwechsel
-        if (now - lastPageSwitch > SWITCH_DELAY) {
+        if (now - lastPageSwitch > currentDelay) {
             if (cycleComplete && currentApp == AUTO) {
                 // AUTO-MODUS: Wir sind am Ende und warten auf den Fade. 
                 // Nichts tun, letztes Bild einfach einfrieren!
