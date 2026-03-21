@@ -388,9 +388,9 @@ void loop() {
                 // Faktor an die App übergeben!
                 if (runningApp) ready = runningApp->isReadyToSwitch(currentDurationMultiplier); 
                 
-                // Fallback-Timer (60s) bekommt ebenfalls den Faktor
-                if (activeTime > (60000 * currentDurationMultiplier)) ready = true; 
-                
+// Fallback-Timer bleibt fest auf 60s, damit Prio-Apps nicht abgewürgt werden
+                if (activeTime > 120000) ready = true;
+
                 // Wir wechseln nur, wenn die App fertig ist UND wir nicht gerade im Fade hängen
                 if (ready && fadeVal >= 1.0 && displayedApp == targetApp) {
                     autoAppIndex++;
@@ -400,7 +400,7 @@ void loop() {
             }
         }
         // --------------------------------
-        
+
         bool appChanged = false;
         bool isFading = false;
         

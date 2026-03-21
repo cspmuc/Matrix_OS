@@ -244,13 +244,19 @@ public:
 
         ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
             int p = (progress / (total / 100));
-            if (p % 2 == 0) {
+            static int lastP = -1; // <--- NEU: Merkt sich den letzten Prozentwert
+            
+            // Zeichnet nur neu, wenn sich die Prozentzahl wirklich geändert hat (1% Schritte)
+            if (p != lastP) {
+                lastP = p;
                 displayRef.clear();
                 displayRef.setTextColor(displayRef.color565(255, 255, 0));
                 displayRef.printCentered("UPDATING...", 17);
+                
                 int w = map(p, 0, 100, 0, 100);
                 displayRef.drawRect(14, 28, 102, 12, displayRef.color565(100, 100, 100)); 
                 displayRef.fillRect(15, 29, w, 10, displayRef.color565(0, 255, 0));       
+                
                 String s = String(p) + "%";
                 displayRef.printCentered(s, 57);
                 displayRef.show();

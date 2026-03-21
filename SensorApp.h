@@ -27,7 +27,7 @@ private:
     std::map<String, SensorPage> pages;
     std::map<String, SensorPage>::iterator currentPageIt;
     unsigned long lastPageSwitch = 0;
-    const int SWITCH_DELAY = 7000; 
+    const int SWITCH_DELAY = 8000; 
 
     bool needsRedraw = true;
     bool cycleComplete = false; // <--- NEU: Merker für Durchlauf
@@ -170,13 +170,13 @@ public:
                 
                 if (prio == 1) {
                     // Prio 1: Rot
-                    c = isActive ? display.color565(255, 0, 0) : display.color565(80, 0, 0);
+                    c = isActive ? display.color565(255, 0, 0) : display.color565(120, 0, 0);
                 } else if (prio == 2) {
-                    // Prio 2: Ocker (Orange/Gold)
-                    c = isActive ? display.color565(255, 170, 0) : display.color565(80, 50, 0);
+                    // Prio 2: Strahlendes Gelb
+                    c = isActive ? display.color565(255, 255, 0) : display.color565(180, 180, 0);
                 } else {
                     // Prio 3 (Normal): Weiß / Dunkelgrau
-                    c = isActive ? display.color565(255, 255, 255) : display.color565(50, 50, 50);
+                    c = isActive ? display.color565(255, 255, 255) : display.color565(70, 70, 70);
                 }
                 
                 display.drawPixel(startX + (idx * 4), 63, c);
@@ -184,7 +184,7 @@ public:
                 idx++;
             }
         }
-                
+
         needsRedraw = false;
         return true;
     }
