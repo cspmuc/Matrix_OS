@@ -42,12 +42,12 @@ struct AnimatedIcon {
     String name;
     uint16_t* pixels; 
     uint8_t* alpha;   
-    uint16_t* delays; // NEU: PSRAM-Array für die individuellen Frame-Delays
+    uint16_t* delays; 
     int width;        
     int height;       
     int totalHeight;  
     int frameCount;   
-    int totalTime;    // NEU: Gesamtdauer der Animation in Millisekunden
+    int totalTime;    
     unsigned long lastUsed;
 };
 
@@ -64,6 +64,7 @@ struct PngExtractContext {
     bool hasTransColor;
     uint32_t transColor; 
 };
+
 struct PngAnimContext {
     uint16_t* pixels; 
     uint8_t* alpha;   
@@ -71,6 +72,7 @@ struct PngAnimContext {
     bool hasTransColor;
     uint32_t transColor; 
 };
+
 struct PngDownloadContext {
     File* fOut;
     int w;
@@ -153,7 +155,6 @@ private:
         size_t numPixels = w * h;
         anim->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         anim->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
-        // NEU: PSRAM Allokation für die Frame-Delays
         anim->delays = (uint16_t*)heap_caps_malloc(frames * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
         if (!anim->pixels || !anim->alpha || !anim->delays) { 
@@ -163,7 +164,6 @@ private:
             delete anim; f.close(); return nullptr; 
         }
 
-        // --- NEU: DLY Datei laden ---
         String dlyFilename = filename;
         dlyFilename.replace(".bmp", ".dly");
         int calculatedTotalTime = 0;
@@ -178,7 +178,6 @@ private:
             }
             fDly.close();
         } else {
-            // Fallback für alte Animationen ohne .dly Datei
             for (int i = 0; i < frames; i++) {
                 anim->delays[i] = 100;
                 calculatedTotalTime += 100;
@@ -242,13 +241,19 @@ private:
         }
         heap_caps_free(lineBuffer); f.close(); return newIcon;
     }
+
+    // --- BEREINIGTER PNG ANIMATION DECODER ---
     static int pngAnimDrawCallback(PNGDRAW *pDraw) {
         PngAnimContext* ctx = (PngAnimContext*)pDraw->pUser;
         uint8_t* src = (uint8_t*)pDraw->pPixels;
         uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
         int pixelType = pDraw->iPixelType; 
-        int bpp = pDraw->iBpp; // <--- WICHTIG: Die Kompressionsstufe (Bits per Pixel)
         int y = pDraw->y; 
+
+        // Sicherheits-Abbruch, falls das PNG höher ist als unser Raster
+        if (y >= ctx->frameH) return 1;
+        // Watchdog füttern, damit der ESP32 nicht abstürzt
+        if (y % 4 == 0) yield();
 
         for (int f = 0; f < ctx->frames; f++) {
             int frameStartX = f * ctx->frameW;
@@ -256,23 +261,17 @@ private:
             
             for (int x = 0; x < ctx->frameW; x++) {
                 int imgX = frameStartX + x;
+                
+                // Bricht sauber ab, wenn das Bild interlaced ist oder Pixel fehlen
                 if (imgX >= pDraw->iWidth) break; 
                 
                 uint8_t r=0, g=0, b=0, a=255;
 
-                // 1. Paletten-Bilder (Oft auf 4-Bit oder 8-Bit komprimiert)
                 if (pixelType == 3 && pPalette) { 
-                    uint8_t idx = 0;
-                    // Pixel mathematisch korrekt aus dem komprimierten Array entpacken!
-                    if (bpp == 8) idx = src[imgX];
-                    else if (bpp == 4) idx = (src[imgX >> 1] >> ((1 - (imgX & 1)) * 4)) & 0x0F;
-                    else if (bpp == 1) idx = (src[imgX >> 3] >> (7 - (imgX & 7))) & 0x01;
-                    else if (bpp == 2) idx = (src[imgX >> 2] >> ((3 - (imgX & 3)) * 2)) & 0x03;
-                    
+                    uint8_t idx = src[imgX];
                     if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { a = 0; } 
                     else { r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2]; }
                 } 
-                // 2. Echtfarben OHNE Alpha (Oft bei schwarzen Hintergründen: 24-Bit RGB)
                 else if (pixelType == 2) { 
                     int idx = imgX * 3; 
                     r = src[idx]; g = src[idx+1]; b = src[idx+2];
@@ -281,16 +280,28 @@ private:
                         if(rgb == ctx->transColor) a = 0;
                     }
                 } 
-                // 3. Echtfarben MIT Alpha (Standard 32-Bit RGBA)
                 else if (pixelType == 6) { 
                     int idx = imgX * 4; 
                     r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
                 }
+                else if (pixelType == 0) {
+                    uint8_t v = src[imgX]; 
+                    r = v; g = v; b = v;
+                    if (ctx->hasTransColor && v == (uint8_t)ctx->transColor) a = 0;
+                }
+                else if (pixelType == 4) {
+                    int idx = imgX * 2;
+                    uint8_t v = src[idx];
+                    r = v; g = v; b = v; a = src[idx+1];
+                }
 
-                // Pixel in den vertikalen Puffer im PSRAM einsortieren
                 int targetIndex = framePixelOffset + (y * ctx->frameW) + x;
-                ctx->pixels[targetIndex] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-                ctx->alpha[targetIndex] = a;
+                
+                // Letzter Check gegen Memory Overflows
+                if (targetIndex < (ctx->frameW * ctx->frameH * ctx->frames)) {
+                    ctx->pixels[targetIndex] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+                    ctx->alpha[targetIndex] = a;
+                }
             }
         }
         return 1;
@@ -302,7 +313,7 @@ private:
 
         int imgW = png.getWidth();
         int imgH = png.getHeight();
-        int frames = imgW / frameW; // Berechnet automatisch die Anzahl der Bilder!
+        int frames = imgW / frameW; 
         if (frames < 1) frames = 1;
         
         AnimatedIcon* anim = new AnimatedIcon();
@@ -321,7 +332,10 @@ private:
             delete anim; png.close(); return nullptr; 
         }
 
-        // Allen Frames die gleiche Pause aus der Config geben
+        // WICHTIG: Speicher hart auf "Transparent" setzen, um Pixelfehler zu killen!
+        memset(anim->pixels, 0, numPixels * sizeof(uint16_t));
+        memset(anim->alpha, 0, numPixels * sizeof(uint8_t));
+
         anim->totalTime = frames * delayMs;
         for (int i=0; i<frames; i++) anim->delays[i] = delayMs;
 
@@ -334,7 +348,8 @@ private:
         png.decode((void*)&ctx, 0);
         png.close();
         return anim;
-    }    
+    }
+
     // --- PNG und Sprite Sheet Decoder ---
     static int pngSheetDrawCallback(PNGDRAW *pDraw) {
         if (pDraw->y % 32 == 0) yield(); 
@@ -568,7 +583,7 @@ private:
         LittleFS.remove("/temp_dl.dat");
         bool success = false;
         String outName = targetFolder + id + ".bmp";
-        String dlyName = targetFolder + id + ".dly"; // NEU: Delay File
+        String dlyName = targetFolder + id + ".dly"; 
 
         if (forceAnim) {
             String url = "https://developer.lametric.com/content/apps/icon_thumbs/" + id + ".gif";
@@ -598,7 +613,6 @@ private:
                                 GifConvertContext ctx = {canvasBuffer, w, h, 0, 0, 0, 0, 0}; 
                                 int prevDispose = 2;
                                 
-                                // NEU: Schreibe Delay-Werte parallel
                                 File fDly = LittleFS.open(dlyName, "w");
                                 
                                 for (int i=0; i<frames; i++) {
@@ -606,10 +620,9 @@ private:
                                     ctx.frameIndex = i;
                                     if (prevDispose == 2) memset(canvasBuffer, 0, canvasSize); 
                                     
-                                    // Hole Delay von der GIF Lib (in Millisekunden)
                                     int frameDelayMs = 0;
                                     gif.playFrame(false, &frameDelayMs, &ctx); 
-                                    if (frameDelayMs < 20) frameDelayMs = 100; // Fallback
+                                    if (frameDelayMs < 20) frameDelayMs = 100; 
                                     
                                     if (fDly) {
                                         uint16_t d = (uint16_t)frameDelayMs;
@@ -783,7 +796,6 @@ public:
         AnimatedIcon* anim = nullptr;
         bool foundInCatalog = false;
 
-        // NEU: Katalog nach der Animation scannen
         if (LittleFS.exists("/catalog.json")) {
             File f = LittleFS.open("/catalog.json", "r");
             if (f) {
@@ -797,7 +809,6 @@ public:
                         foundInCatalog = true;
                         delete doc; doc = nullptr; f.close();
                         
-                        // Lade aus dem PNG Filmstreifen!
                         anim = loadAnimFromPngSheet(id, file, frameW, delayMs);
                     }
                 }
@@ -806,7 +817,6 @@ public:
             }
         }
 
-        // Bisheriger LaMetric Fallback
         if (!foundInCatalog) {
             String path = "/iconsan/" + id + ".bmp";
             if (!LittleFS.exists(path)) {
@@ -856,7 +866,6 @@ public:
 
         int currentFrameIdx = 0;
         
-        // --- NEU: Dynamische Frame-Auswahl anhand summierter Delays ---
         if (anim->totalTime > 0) {
             unsigned long timeInCycle = millis() % anim->totalTime;
             unsigned long accumulatedTime = 0;
