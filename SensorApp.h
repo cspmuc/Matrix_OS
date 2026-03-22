@@ -144,11 +144,13 @@ public:
 
         // --- NEU: Animations-Check ---
         // Wir prüfen, ob die aktuell angezeigte Seite ein animiertes Icon ("la:") enthält.
+        // --- NEU: Animations-Check ---
         bool hasAnimation = false;
         if (currentPageIt != pages.end()) {
             for (const auto& item : currentPageIt->second.items) {
-                // Prüft das Icon-Feld und den Text auf das "la:" Tag
-                if (item.icon.indexOf("la:") != -1 || item.text.indexOf("{la:") != -1) {
+                // NEU: Reagiert jetzt auch auf das "an:" Präfix!
+                if (item.icon.indexOf("la:") != -1 || item.icon.indexOf("an:") != -1 || 
+                    item.text.indexOf("{la:") != -1 || item.text.indexOf("{an:") != -1) {
                     hasAnimation = true;
                     break;
                 }

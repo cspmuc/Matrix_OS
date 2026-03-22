@@ -6,6 +6,9 @@
       "rows": 128
     }
   },
+  "animations": {
+    "regen": { "file": "/clear-day.png", "frame_width": 16, "delay": 150 }
+  },
   "icons": {
     "grinning_face": { "sheet": "dottopng", "index": 0 },
     "grinning_face_with_big_eyes": { "sheet": "dottopng", "index": 1 },

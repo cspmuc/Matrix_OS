@@ -168,7 +168,13 @@ private:
             bitmapName = tag.substring(3);
             return "";
         }
-
+// --- NEU: 5. LOCAL ANIMATED {an:name} ---
+        if (tag.startsWith("an:")) {
+            isBitmapIcon = true;
+            isAnimated = true; 
+            bitmapName = tag.substring(3);
+            return "";
+        }
         // --- 5. LAMETRIC TAG {lt:alias} ---
         if (tag.startsWith("lt:")) {
             String alias = tag.substring(3);

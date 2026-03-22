@@ -64,7 +64,13 @@ struct PngExtractContext {
     bool hasTransColor;
     uint32_t transColor; 
 };
-
+struct PngAnimContext {
+    uint16_t* pixels; 
+    uint8_t* alpha;   
+    int frameW, frameH, frames; 
+    bool hasTransColor;
+    uint32_t transColor; 
+};
 struct PngDownloadContext {
     File* fOut;
     int w;
@@ -236,7 +242,99 @@ private:
         }
         heap_caps_free(lineBuffer); f.close(); return newIcon;
     }
-    
+    static int pngAnimDrawCallback(PNGDRAW *pDraw) {
+        PngAnimContext* ctx = (PngAnimContext*)pDraw->pUser;
+        uint8_t* src = (uint8_t*)pDraw->pPixels;
+        uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
+        int pixelType = pDraw->iPixelType; 
+        int bpp = pDraw->iBpp; // <--- WICHTIG: Die Kompressionsstufe (Bits per Pixel)
+        int y = pDraw->y; 
+
+        for (int f = 0; f < ctx->frames; f++) {
+            int frameStartX = f * ctx->frameW;
+            int framePixelOffset = f * (ctx->frameW * ctx->frameH); 
+            
+            for (int x = 0; x < ctx->frameW; x++) {
+                int imgX = frameStartX + x;
+                if (imgX >= pDraw->iWidth) break; 
+                
+                uint8_t r=0, g=0, b=0, a=255;
+
+                // 1. Paletten-Bilder (Oft auf 4-Bit oder 8-Bit komprimiert)
+                if (pixelType == 3 && pPalette) { 
+                    uint8_t idx = 0;
+                    // Pixel mathematisch korrekt aus dem komprimierten Array entpacken!
+                    if (bpp == 8) idx = src[imgX];
+                    else if (bpp == 4) idx = (src[imgX >> 1] >> ((1 - (imgX & 1)) * 4)) & 0x0F;
+                    else if (bpp == 1) idx = (src[imgX >> 3] >> (7 - (imgX & 7))) & 0x01;
+                    else if (bpp == 2) idx = (src[imgX >> 2] >> ((3 - (imgX & 3)) * 2)) & 0x03;
+                    
+                    if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { a = 0; } 
+                    else { r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2]; }
+                } 
+                // 2. Echtfarben OHNE Alpha (Oft bei schwarzen Hintergründen: 24-Bit RGB)
+                else if (pixelType == 2) { 
+                    int idx = imgX * 3; 
+                    r = src[idx]; g = src[idx+1]; b = src[idx+2];
+                    if (ctx->hasTransColor) {
+                        uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+                        if(rgb == ctx->transColor) a = 0;
+                    }
+                } 
+                // 3. Echtfarben MIT Alpha (Standard 32-Bit RGBA)
+                else if (pixelType == 6) { 
+                    int idx = imgX * 4; 
+                    r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
+                }
+
+                // Pixel in den vertikalen Puffer im PSRAM einsortieren
+                int targetIndex = framePixelOffset + (y * ctx->frameW) + x;
+                ctx->pixels[targetIndex] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+                ctx->alpha[targetIndex] = a;
+            }
+        }
+        return 1;
+    }
+
+    AnimatedIcon* loadAnimFromPngSheet(String name, String filename, int frameW, int delayMs) {
+        if (!LittleFS.exists(filename)) return nullptr;
+        if (png.open(filename.c_str(), myOpen, myClose, myRead, mySeek, pngAnimDrawCallback) != PNG_SUCCESS) return nullptr;
+
+        int imgW = png.getWidth();
+        int imgH = png.getHeight();
+        int frames = imgW / frameW; // Berechnet automatisch die Anzahl der Bilder!
+        if (frames < 1) frames = 1;
+        
+        AnimatedIcon* anim = new AnimatedIcon();
+        anim->name = name; anim->width = frameW; anim->height = imgH;
+        anim->totalHeight = imgH * frames; anim->frameCount = frames; anim->lastUsed = millis();
+        
+        size_t numPixels = anim->width * anim->totalHeight;
+        anim->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+        anim->alpha = (uint8_t*)heap_caps_malloc(numPixels * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
+        anim->delays = (uint16_t*)heap_caps_malloc(frames * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+
+        if (!anim->pixels || !anim->alpha || !anim->delays) { 
+            if(anim->pixels) heap_caps_free(anim->pixels); 
+            if(anim->alpha) heap_caps_free(anim->alpha); 
+            if(anim->delays) heap_caps_free(anim->delays);
+            delete anim; png.close(); return nullptr; 
+        }
+
+        // Allen Frames die gleiche Pause aus der Config geben
+        anim->totalTime = frames * delayMs;
+        for (int i=0; i<frames; i++) anim->delays[i] = delayMs;
+
+        PngAnimContext ctx;
+        ctx.pixels = anim->pixels; ctx.alpha = anim->alpha;
+        ctx.frameW = frameW; ctx.frameH = imgH; ctx.frames = frames;
+        int tColor = png.getTransparentColor(); 
+        ctx.hasTransColor = (tColor != -1); ctx.transColor = (uint32_t)tColor;
+
+        png.decode((void*)&ctx, 0);
+        png.close();
+        return anim;
+    }    
     // --- PNG und Sprite Sheet Decoder ---
     static int pngSheetDrawCallback(PNGDRAW *pDraw) {
         if (pDraw->y % 32 == 0) yield(); 
@@ -675,6 +773,7 @@ public:
     AnimatedIcon* getAnimatedIcon(String id) {
         if (id.startsWith("la:")) id = id.substring(3);
         else if (id.startsWith("ln:")) id = id.substring(3);
+        else if (id.startsWith("an:")) id = id.substring(3);
 
         for (auto it = animCache.begin(); it != animCache.end(); ++it) {
             if ((*it)->name == id) { (*it)->lastUsed = millis(); return *it; }
@@ -682,24 +781,50 @@ public:
         for(const String& bad : failedIcons) if (bad == id) return nullptr;
 
         AnimatedIcon* anim = nullptr;
-        String path = "/iconsan/" + id + ".bmp";
+        bool foundInCatalog = false;
 
-        if (!LittleFS.exists(path)) {
-            bool isNumeric = true;
-            for(unsigned int i=0; i<id.length(); i++) if(!isDigit(id[i])) isNumeric = false;
-            if (isNumeric && id.length() > 0) {
-                if (!downloadAndConvert(id, "/iconsan/", true)) { failedIcons.push_back(id); return nullptr; }
-            } else { failedIcons.push_back(id); return nullptr; }
+        // NEU: Katalog nach der Animation scannen
+        if (LittleFS.exists("/catalog.json")) {
+            File f = LittleFS.open("/catalog.json", "r");
+            if (f) {
+                SpiRamJsonDocument* doc = new SpiRamJsonDocument(8192);
+                if (!deserializeJson(*doc, f)) {
+                    if (doc->containsKey("animations") && (*doc)["animations"].containsKey(id)) {
+                        String file = (*doc)["animations"][id]["file"].as<String>();
+                        int frameW = (*doc)["animations"][id]["frame_width"] | 16;
+                        int delayMs = (*doc)["animations"][id]["delay"] | 100;
+                        
+                        foundInCatalog = true;
+                        delete doc; doc = nullptr; f.close();
+                        
+                        // Lade aus dem PNG Filmstreifen!
+                        anim = loadAnimFromPngSheet(id, file, frameW, delayMs);
+                    }
+                }
+                if (doc) delete doc;
+                if (f) f.close();
+            }
         }
-        
-        anim = loadAnimFromFS(path, id);
+
+        // Bisheriger LaMetric Fallback
+        if (!foundInCatalog) {
+            String path = "/iconsan/" + id + ".bmp";
+            if (!LittleFS.exists(path)) {
+                bool isNumeric = true;
+                for(unsigned int i=0; i<id.length(); i++) if(!isDigit(id[i])) isNumeric = false;
+                if (isNumeric && id.length() > 0) {
+                    if (!downloadAndConvert(id, "/iconsan/", true)) { failedIcons.push_back(id); return nullptr; }
+                } else { failedIcons.push_back(id); return nullptr; }
+            }
+            anim = loadAnimFromFS(path, id);
+        }
         
         if (anim) {
             while (animCache.size() >= MAX_CACHE_SIZE_ANIM && !animCache.empty()) {
                 AnimatedIcon* old = animCache.back(); animCache.pop_back();
                 if(old->pixels) heap_caps_free(old->pixels); 
                 if(old->alpha) heap_caps_free(old->alpha); 
-                if(old->delays) heap_caps_free(old->delays); // NEU: PSRAM Freigabe
+                if(old->delays) heap_caps_free(old->delays);
                 delete old;
             }
             animCache.push_front(anim);
