@@ -69,6 +69,7 @@ struct PngAnimContext {
     uint16_t* pixels; 
     uint8_t* alpha;   
     int frameW, frameH, frames; 
+    bool isVertical;      // <--- HIER HAT DAS FELD GEFEHLT!
     bool hasTransColor;
     uint32_t transColor; 
 };
@@ -242,7 +243,7 @@ private:
         heap_caps_free(lineBuffer); f.close(); return newIcon;
     }
 
-    // --- BEREINIGTER PNG ANIMATION DECODER ---
+    // --- 2. DER UNIVERSELLE DEKODER (Für Hoch- und Querformat) ---
     static int pngAnimDrawCallback(PNGDRAW *pDraw) {
         PngAnimContext* ctx = (PngAnimContext*)pDraw->pUser;
         uint8_t* src = (uint8_t*)pDraw->pPixels;
@@ -250,75 +251,140 @@ private:
         int pixelType = pDraw->iPixelType; 
         int y = pDraw->y; 
 
-        // Sicherheits-Abbruch, falls das PNG höher ist als unser Raster
-        if (y >= ctx->frameH) return 1;
-        // Watchdog füttern, damit der ESP32 nicht abstürzt
         if (y % 4 == 0) yield();
 
-        for (int f = 0; f < ctx->frames; f++) {
-            int frameStartX = f * ctx->frameW;
-            int framePixelOffset = f * (ctx->frameW * ctx->frameH); 
+        if (ctx->isVertical) {
+            // --- MODUS 1: VERTIKALER FILMSTREIFEN (z.B. 16x512) ---
+            if (y >= ctx->frameH * ctx->frames) return 1;
+            
+            int f = y / ctx->frameH;           
+            int rowInFrame = y % ctx->frameH;  
+            int framePixelOffset = f * (ctx->frameW * ctx->frameH);
             
             for (int x = 0; x < ctx->frameW; x++) {
-                int imgX = frameStartX + x;
-                
-                // Bricht sauber ab, wenn das Bild interlaced ist oder Pixel fehlen
-                if (imgX >= pDraw->iWidth) break; 
+                if (x >= pDraw->iWidth) break;
                 
                 uint8_t r=0, g=0, b=0, a=255;
-
                 if (pixelType == 3 && pPalette) { 
-                    uint8_t idx = src[imgX];
+                    uint8_t idx = src[x];
                     if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { a = 0; } 
                     else { r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2]; }
-                } 
-                else if (pixelType == 2) { 
-                    int idx = imgX * 3; 
-                    r = src[idx]; g = src[idx+1]; b = src[idx+2];
+                } else if (pixelType == 2) { 
+                    int idx = x * 3; r = src[idx]; g = src[idx+1]; b = src[idx+2];
                     if (ctx->hasTransColor) {
                         uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
                         if(rgb == ctx->transColor) a = 0;
                     }
-                } 
-                else if (pixelType == 6) { 
-                    int idx = imgX * 4; 
-                    r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
-                }
-                else if (pixelType == 0) {
-                    uint8_t v = src[imgX]; 
-                    r = v; g = v; b = v;
+                } else if (pixelType == 6) { 
+                    int idx = x * 4; r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
+                } else if (pixelType == 0) {
+                    uint8_t v = src[x]; r = v; g = v; b = v;
                     if (ctx->hasTransColor && v == (uint8_t)ctx->transColor) a = 0;
-                }
-                else if (pixelType == 4) {
-                    int idx = imgX * 2;
-                    uint8_t v = src[idx];
-                    r = v; g = v; b = v; a = src[idx+1];
+                } else if (pixelType == 4) {
+                    int idx = x * 2; uint8_t v = src[idx]; r = v; g = v; b = v; a = src[idx+1];
                 }
 
-                int targetIndex = framePixelOffset + (y * ctx->frameW) + x;
-                
-                // Letzter Check gegen Memory Overflows
+                int targetIndex = framePixelOffset + (rowInFrame * ctx->frameW) + x;
                 if (targetIndex < (ctx->frameW * ctx->frameH * ctx->frames)) {
                     ctx->pixels[targetIndex] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
                     ctx->alpha[targetIndex] = a;
+                }
+            }
+        } else {
+            // --- MODUS 2: HORIZONTALER FILMSTREIFEN (z.B. 512x16) ---
+            if (y >= ctx->frameH) return 1;
+            
+            for (int f = 0; f < ctx->frames; f++) {
+                int frameStartX = f * ctx->frameW;
+                int framePixelOffset = f * (ctx->frameW * ctx->frameH); 
+                
+                for (int x = 0; x < ctx->frameW; x++) {
+                    int imgX = frameStartX + x;
+                    if (imgX >= pDraw->iWidth) break; 
+                    
+                    uint8_t r=0, g=0, b=0, a=255;
+                    if (pixelType == 3 && pPalette) { 
+                        uint8_t idx = src[imgX];
+                        if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { a = 0; } 
+                        else { r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2]; }
+                    } else if (pixelType == 2) { 
+                        int idx = imgX * 3; r = src[imgX]; g = src[imgX+1]; b = src[imgX+2];
+                        if (ctx->hasTransColor) {
+                            uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+                            if(rgb == ctx->transColor) a = 0;
+                        }
+                    } else if (pixelType == 6) { 
+                        int idx = imgX * 4; r = src[imgX]; g = src[imgX+1]; b = src[imgX+2]; a = src[imgX+3];
+                    } else if (pixelType == 0) {
+                        uint8_t v = src[imgX]; r = v; g = v; b = v;
+                        if (ctx->hasTransColor && v == (uint8_t)ctx->transColor) a = 0;
+                    } else if (pixelType == 4) {
+                        int idx = imgX * 2; uint8_t v = src[idx]; r = v; g = v; b = v; a = src[idx+1];
+                    }
+
+                    int targetIndex = framePixelOffset + (y * ctx->frameW) + x;
+                    if (targetIndex < (ctx->frameW * ctx->frameH * ctx->frames)) {
+                        ctx->pixels[targetIndex] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+                        ctx->alpha[targetIndex] = a;
+                    }
                 }
             }
         }
         return 1;
     }
 
+    // --- 3. DIE LADEFUNKTION (Mit RAM-Load & Bugfix) ---
     AnimatedIcon* loadAnimFromPngSheet(String name, String filename, int frameW, int delayMs) {
         if (!LittleFS.exists(filename)) return nullptr;
-        if (png.open(filename.c_str(), myOpen, myClose, myRead, mySeek, pngAnimDrawCallback) != PNG_SUCCESS) return nullptr;
+        
+        File f = LittleFS.open(filename, "r");
+        if (!f) return nullptr;
+        
+        size_t fileSize = f.size();
+        uint8_t* pngFileData = (uint8_t*)heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM);
+        
+        if (!pngFileData) { f.close(); return nullptr; }
+        
+        size_t bytesRead = 0;
+        while (bytesRead < fileSize) {
+            int32_t r = f.read(pngFileData + bytesRead, fileSize - bytesRead);
+            if (r < 0) break; // Echter Lesefehler
+            if (r == 0) {
+                delay(1); // Warte auf das Dateisystem
+                continue;
+            }
+            bytesRead += r;
+        }
+        f.close();
+
+        if (png.openRAM(pngFileData, bytesRead, pngAnimDrawCallback) != PNG_SUCCESS) {
+            heap_caps_free(pngFileData);
+            return nullptr;
+        }
 
         int imgW = png.getWidth();
         int imgH = png.getHeight();
-        int frames = imgW / frameW; 
+        
+        bool isVertical = false;
+        int frames = 1;
+        int frameH = 16;
+        
+        // --- AUTO-DETECT ---
+        if (imgH > imgW) {
+            isVertical = true;
+            frames = imgH / imgW; 
+            frameW = imgW; 
+            frameH = imgW; 
+        } else {
+            isVertical = false;
+            frames = imgW / frameW; 
+            frameH = imgH;
+        }
         if (frames < 1) frames = 1;
         
         AnimatedIcon* anim = new AnimatedIcon();
-        anim->name = name; anim->width = frameW; anim->height = imgH;
-        anim->totalHeight = imgH * frames; anim->frameCount = frames; anim->lastUsed = millis();
+        anim->name = name; anim->width = frameW; anim->height = frameH;
+        anim->totalHeight = frameH * frames; anim->frameCount = frames; anim->lastUsed = millis();
         
         size_t numPixels = anim->width * anim->totalHeight;
         anim->pixels = (uint16_t*)heap_caps_malloc(numPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
@@ -329,10 +395,9 @@ private:
             if(anim->pixels) heap_caps_free(anim->pixels); 
             if(anim->alpha) heap_caps_free(anim->alpha); 
             if(anim->delays) heap_caps_free(anim->delays);
-            delete anim; png.close(); return nullptr; 
+            delete anim; png.close(); heap_caps_free(pngFileData); return nullptr; 
         }
 
-        // WICHTIG: Speicher hart auf "Transparent" setzen, um Pixelfehler zu killen!
         memset(anim->pixels, 0, numPixels * sizeof(uint16_t));
         memset(anim->alpha, 0, numPixels * sizeof(uint8_t));
 
@@ -341,12 +406,16 @@ private:
 
         PngAnimContext ctx;
         ctx.pixels = anim->pixels; ctx.alpha = anim->alpha;
-        ctx.frameW = frameW; ctx.frameH = imgH; ctx.frames = frames;
+        ctx.frameW = frameW; ctx.frameH = frameH; ctx.frames = frames;
+        ctx.isVertical = isVertical; // Das funktioniert jetzt!
         int tColor = png.getTransparentColor(); 
         ctx.hasTransColor = (tColor != -1); ctx.transColor = (uint32_t)tColor;
 
         png.decode((void*)&ctx, 0);
+        
         png.close();
+        heap_caps_free(pngFileData); 
+        
         return anim;
     }
 
@@ -479,18 +548,24 @@ private:
     static int32_t myRead(PNGFILE *handle, uint8_t *buffer, int32_t length) {
         File* f = (File*)handle->fHandle; 
         if (!f) return 0;
-        return f->read(buffer, length);
+        
+        int32_t bytesRead = 0;
+        // Hartnäckige Schleife: Wir lesen so lange, bis wir ALLES haben, was verlangt wurde!
+        while (bytesRead < length && f->available()) {
+            int32_t r = f->read(buffer + bytesRead, length - bytesRead);
+            if (r <= 0) break; // Fehler oder Dateiende erreicht
+            bytesRead += r;
+        }
+        return bytesRead;
     }
     
     static int32_t mySeek(PNGFILE *handle, int32_t position) {
         File* f = (File*)handle->fHandle; 
         if (!f) return 0;
         
-        // WICHTIG: Wir müssen der Bibliothek die echte Position zurückgeben!
-        if (f->seek(position)) {
-            return position; 
-        }
-        return 0;
+        f->seek(position);
+        // Gibt immer die absolut echte Position im Dateisystem zurück
+        return f->position(); 
     }
     
     // --- Download PNG & GIF Konvertierung ---
