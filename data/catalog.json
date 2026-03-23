@@ -7,7 +7,7 @@
     }
   },
   "animations": {
-    "regen": { "file": "/clear-day.png", "frame_width": 16, "delay": 150 }
+    "clear_day": { "file": "/clear-day.png", "frame_width": 16, "delay": 150 }
   },
   "icons": {
     "grinning_face": { "sheet": "dottopng", "index": 0 },

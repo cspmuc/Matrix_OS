@@ -470,12 +470,27 @@ private:
         if (*f) { if (size) *size = f->size(); return (void*)f; }
         delete f; return nullptr;
     }
-    static void myClose(void *handle) { File* f = (File*)handle; if(f) { f->close(); delete f; } }
-    static int32_t myRead(PNGFILE *handle, uint8_t *buffer, int32_t length) {
-        File* f = (File*)handle->fHandle; return f ? f->read(buffer, length) : 0;
+    
+    static void myClose(void *handle) { 
+        File* f = (File*)handle; 
+        if(f) { f->close(); delete f; } 
     }
+    
+    static int32_t myRead(PNGFILE *handle, uint8_t *buffer, int32_t length) {
+        File* f = (File*)handle->fHandle; 
+        if (!f) return 0;
+        return f->read(buffer, length);
+    }
+    
     static int32_t mySeek(PNGFILE *handle, int32_t position) {
-        File* f = (File*)handle->fHandle; return f ? f->seek(position) : 0;
+        File* f = (File*)handle->fHandle; 
+        if (!f) return 0;
+        
+        // DER FEHLER WAR HIER: Wir müssen die echte Position zurückgeben, nicht nur "true"!
+        if (f->seek(position)) {
+            return position; 
+        }
+        return 0;
     }
     
     // --- Download PNG & GIF Konvertierung ---
