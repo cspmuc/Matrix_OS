@@ -486,7 +486,7 @@ private:
         File* f = (File*)handle->fHandle; 
         if (!f) return 0;
         
-        // DER FEHLER WAR HIER: Wir müssen die echte Position zurückgeben, nicht nur "true"!
+        // WICHTIG: Wir müssen der Bibliothek die echte Position zurückgeben!
         if (f->seek(position)) {
             return position; 
         }
