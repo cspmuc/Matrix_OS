@@ -70,6 +70,7 @@ struct PngAnimContext {
         uint8_t* alpha;   
         int frameW, frameH, frames; 
         bool isVertical;      
+        bool isRotated;       // <--- NEU: Merkt sich, ob das Bild gedreht ist
         bool hasTransColor;
         uint32_t transColor; 
 };
@@ -338,7 +339,7 @@ private:
     }
 
     // --- 3. DIE SCHNELLE RAM-LADEFUNKTION ---
-    AnimatedIcon* loadAnimFromPngSheet(String name, String filename, int frameW, int delayMs) {
+    AnimatedIcon* loadAnimFromPngSheet(String name, String filename, int frameW, int delayMs, bool rotated = false) {
         if (!LittleFS.exists(filename)) return nullptr;
         
         File f = LittleFS.open(filename, "r");
@@ -408,6 +409,7 @@ private:
         ctx.pixels = anim->pixels; ctx.alpha = anim->alpha;
         ctx.frameW = frameW; ctx.frameH = frameH; ctx.frames = frames;
         ctx.isVertical = isVertical; 
+        ctx.isRotated = rotated;     // <--- NEU: Übergabe an den Dekoder
         int tColor = png.getTransparentColor(); 
         ctx.hasTransColor = (tColor != -1); ctx.transColor = (uint32_t)tColor;
 
@@ -895,11 +897,12 @@ public:
                         String file = (*doc)["animations"][id]["file"].as<String>();
                         int frameW = (*doc)["animations"][id]["frame_width"] | 16;
                         int delayMs = (*doc)["animations"][id]["delay"] | 100;
-                        
+                        bool rotated = (*doc)["animations"][id]["rotated"] | false; // <--- NEU
+
                         foundInCatalog = true;
                         delete doc; doc = nullptr; f.close();
                         
-                        anim = loadAnimFromPngSheet(id, file, frameW, delayMs);
+                        anim = loadAnimFromPngSheet(id, file, frameW, delayMs, rotated);
                     }
                 }
                 if (doc) delete doc;
