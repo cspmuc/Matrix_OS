@@ -7,7 +7,8 @@
     }
   },
   "animations": {
-    "clear_day": { "file": "/clear-day.png", "frame_width": 16, "delay": 150 }
+    "clear_day": { "file": "/clear-day.png", "frame_width": 16, "delay": 150, "rotated": true },
+    "rain": { "file": "/rain.png", "frame_width": 16, "delay": 150, "rotated": true }
   },
   "icons": {
     "grinning_face": { "sheet": "dottopng", "index": 0 },

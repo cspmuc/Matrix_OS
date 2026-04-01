@@ -244,7 +244,7 @@ private:
         heap_caps_free(lineBuffer); f.close(); return newIcon;
     }
 
-    // --- 2. DER HOCHEFFIZIENTE DEKODER ---
+    // --- DER HOCHEFFIZIENTE UND KUGELSICHERE DEKODER ---
     static int pngAnimDrawCallback(PNGDRAW *pDraw) {
         PngAnimContext* ctx = (PngAnimContext*)pDraw->pUser;
         uint8_t* src = (uint8_t*)pDraw->pPixels;
@@ -285,16 +285,43 @@ private:
                 } else if (pixelType == 6) { 
                     int idx = (bpp == 16) ? (x * 8) : (x * 4);
                     r = src[idx]; g = src[idx + (bpp==16?2:1)]; b = src[idx + (bpp==16?4:2)]; a = src[idx + (bpp==16?6:3)];
+                } else if (pixelType == 0) { 
+                    uint8_t v = 0;
+                    if (bpp == 16) v = src[x * 2];
+                    else if (bpp == 8) v = src[x];
+                    else if (bpp == 4) v = (src[x >> 1] >> ((1 - (x & 1)) * 4)) & 0x0F;
+                    else if (bpp == 2) v = (src[x >> 2] >> ((3 - (x & 3)) * 2)) & 0x03;
+                    else if (bpp == 1) v = (src[x >> 3] >> (7 - (x & 7))) & 0x01;
+                    
+                    if (bpp == 4) v = v | (v << 4);
+                    if (bpp == 2) v = v | (v << 2) | (v << 4) | (v << 6);
+                    if (bpp == 1) v = v ? 255 : 0;
+                    
+                    r = v; g = v; b = v;
+                    if (ctx->hasTransColor && v == (uint8_t)ctx->transColor) a = 0;
+                } else if (pixelType == 4) { 
+                    int idx = (bpp == 16) ? (x * 4) : (x * 2);
+                    uint8_t v = src[idx]; r = v; g = v; b = v; a = src[idx + (bpp==16?2:1)];
                 }
 
-                int targetIndex = framePixelOffset + (rowInFrame * ctx->frameW) + x;
-                if (targetIndex < (ctx->frameW * ctx->frameH * ctx->frames)) {
+                // --- NEU: Die magische Zurück-Drehung! ---
+                int targetIndex;
+                if (ctx->isRotated) {
+                    // Das Bild liegt auf der Seite (90° im Uhrzeigersinn).
+                    // Wir drehen die Pixel im RAM beim Speichern einfach um 90° zurück!
+                    targetIndex = framePixelOffset + ((ctx->frameW - 1 - x) * ctx->frameW) + rowInFrame;
+                } else {
+                    // Normales, aufrechtes Bild
+                    targetIndex = framePixelOffset + (rowInFrame * ctx->frameW) + x;
+                }
+
+                if (targetIndex >= 0 && targetIndex < (ctx->frameW * ctx->frameH * ctx->frames)) {
                     ctx->pixels[targetIndex] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
                     ctx->alpha[targetIndex] = a;
                 }
             }
         } else {
-            // --- MODUS 2: HORIZONTAL (512x16, max. 8-Bit) ---
+            // --- MODUS 2: HORIZONTAL (512x16) ---
             if (y >= ctx->frameH) return 1;
             
             for (int f = 0; f < ctx->frames; f++) {
@@ -325,10 +352,27 @@ private:
                     } else if (pixelType == 6) { 
                         int idx = (bpp == 16) ? (imgX * 8) : (imgX * 4);
                         r = src[idx]; g = src[idx + (bpp==16?2:1)]; b = src[idx + (bpp==16?4:2)]; a = src[idx + (bpp==16?6:3)];
+                    } else if (pixelType == 0) { 
+                        uint8_t v = 0;
+                        if (bpp == 16) v = src[imgX * 2];
+                        else if (bpp == 8) v = src[imgX];
+                        else if (bpp == 4) v = (src[imgX >> 1] >> ((1 - (imgX & 1)) * 4)) & 0x0F;
+                        else if (bpp == 2) v = (src[imgX >> 2] >> ((3 - (imgX & 3)) * 2)) & 0x03;
+                        else if (bpp == 1) v = (src[imgX >> 3] >> (7 - (imgX & 7))) & 0x01;
+                        
+                        if (bpp == 4) v = v | (v << 4);
+                        if (bpp == 2) v = v | (v << 2) | (v << 4) | (v << 6);
+                        if (bpp == 1) v = v ? 255 : 0;
+                        
+                        r = v; g = v; b = v;
+                        if (ctx->hasTransColor && v == (uint8_t)ctx->transColor) a = 0;
+                    } else if (pixelType == 4) { 
+                        int idx = (bpp == 16) ? (imgX * 4) : (imgX * 2);
+                        uint8_t v = src[idx]; r = v; g = v; b = v; a = src[idx + (bpp==16?2:1)];
                     }
 
                     int targetIndex = framePixelOffset + (y * ctx->frameW) + x;
-                    if (targetIndex < (ctx->frameW * ctx->frameH * ctx->frames)) {
+                    if (targetIndex >= 0 && targetIndex < (ctx->frameW * ctx->frameH * ctx->frames)) {
                         ctx->pixels[targetIndex] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
                         ctx->alpha[targetIndex] = a;
                     }
