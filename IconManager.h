@@ -66,12 +66,12 @@ struct PngExtractContext {
 };
 
 struct PngAnimContext {
-    uint16_t* pixels; 
-    uint8_t* alpha;   
-    int frameW, frameH, frames; 
-    bool isVertical;      // <--- HIER HAT DAS FELD GEFEHLT!
-    bool hasTransColor;
-    uint32_t transColor; 
+        uint16_t* pixels; 
+        uint8_t* alpha;   
+        int frameW, frameH, frames; 
+        bool isVertical;      
+        bool hasTransColor;
+        uint32_t transColor; 
 };
 
 struct PngDownloadContext {
@@ -243,20 +243,20 @@ private:
         heap_caps_free(lineBuffer); f.close(); return newIcon;
     }
 
-    // --- 2. DER UNIVERSELLE DEKODER (Für Hoch- und Querformat) ---
+    // --- 2. DER HOCHEFFIZIENTE DEKODER ---
     static int pngAnimDrawCallback(PNGDRAW *pDraw) {
         PngAnimContext* ctx = (PngAnimContext*)pDraw->pUser;
         uint8_t* src = (uint8_t*)pDraw->pPixels;
         uint8_t* pPalette = (uint8_t*)pDraw->pPalette;
         int pixelType = pDraw->iPixelType; 
+        int bpp = pDraw->iBpp; 
         int y = pDraw->y; 
 
         if (y % 4 == 0) yield();
 
         if (ctx->isVertical) {
-            // --- MODUS 1: VERTIKALER FILMSTREIFEN (z.B. 16x512) ---
+            // --- MODUS 1: VERTIKAL (16x512) ---
             if (y >= ctx->frameH * ctx->frames) return 1;
-            
             int f = y / ctx->frameH;           
             int rowInFrame = y % ctx->frameH;  
             int framePixelOffset = f * (ctx->frameW * ctx->frameH);
@@ -266,22 +266,24 @@ private:
                 
                 uint8_t r=0, g=0, b=0, a=255;
                 if (pixelType == 3 && pPalette) { 
-                    uint8_t idx = src[x];
+                    uint8_t idx = 0;
+                    if (bpp == 8) idx = src[x];
+                    else if (bpp == 4) idx = (src[x >> 1] >> ((1 - (x & 1)) * 4)) & 0x0F;
+                    else if (bpp == 2) idx = (src[x >> 2] >> ((3 - (x & 3)) * 2)) & 0x03;
+                    else if (bpp == 1) idx = (src[x >> 3] >> (7 - (x & 7))) & 0x01;
+                    
                     if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { a = 0; } 
                     else { r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2]; }
                 } else if (pixelType == 2) { 
-                    int idx = x * 3; r = src[idx]; g = src[idx+1]; b = src[idx+2];
+                    int idx = (bpp == 16) ? (x * 6) : (x * 3);
+                    r = src[idx]; g = src[idx + (bpp==16?2:1)]; b = src[idx + (bpp==16?4:2)];
                     if (ctx->hasTransColor) {
                         uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
                         if(rgb == ctx->transColor) a = 0;
                     }
                 } else if (pixelType == 6) { 
-                    int idx = x * 4; r = src[idx]; g = src[idx+1]; b = src[idx+2]; a = src[idx+3];
-                } else if (pixelType == 0) {
-                    uint8_t v = src[x]; r = v; g = v; b = v;
-                    if (ctx->hasTransColor && v == (uint8_t)ctx->transColor) a = 0;
-                } else if (pixelType == 4) {
-                    int idx = x * 2; uint8_t v = src[idx]; r = v; g = v; b = v; a = src[idx+1];
+                    int idx = (bpp == 16) ? (x * 8) : (x * 4);
+                    r = src[idx]; g = src[idx + (bpp==16?2:1)]; b = src[idx + (bpp==16?4:2)]; a = src[idx + (bpp==16?6:3)];
                 }
 
                 int targetIndex = framePixelOffset + (rowInFrame * ctx->frameW) + x;
@@ -291,7 +293,7 @@ private:
                 }
             }
         } else {
-            // --- MODUS 2: HORIZONTALER FILMSTREIFEN (z.B. 512x16) ---
+            // --- MODUS 2: HORIZONTAL (512x16, max. 8-Bit) ---
             if (y >= ctx->frameH) return 1;
             
             for (int f = 0; f < ctx->frames; f++) {
@@ -304,22 +306,24 @@ private:
                     
                     uint8_t r=0, g=0, b=0, a=255;
                     if (pixelType == 3 && pPalette) { 
-                        uint8_t idx = src[imgX];
+                        uint8_t idx = 0;
+                        if (bpp == 8) idx = src[imgX];
+                        else if (bpp == 4) idx = (src[imgX >> 1] >> ((1 - (imgX & 1)) * 4)) & 0x0F;
+                        else if (bpp == 2) idx = (src[imgX >> 2] >> ((3 - (imgX & 3)) * 2)) & 0x03;
+                        else if (bpp == 1) idx = (src[imgX >> 3] >> (7 - (imgX & 7))) & 0x01;
+                        
                         if (ctx->hasTransColor && idx == (uint8_t)ctx->transColor) { a = 0; } 
                         else { r = pPalette[idx*3]; g = pPalette[idx*3+1]; b = pPalette[idx*3+2]; }
                     } else if (pixelType == 2) { 
-                        int idx = imgX * 3; r = src[imgX]; g = src[imgX+1]; b = src[imgX+2];
+                        int idx = (bpp == 16) ? (imgX * 6) : (imgX * 3);
+                        r = src[idx]; g = src[idx + (bpp==16?2:1)]; b = src[idx + (bpp==16?4:2)];
                         if (ctx->hasTransColor) {
                             uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
                             if(rgb == ctx->transColor) a = 0;
                         }
                     } else if (pixelType == 6) { 
-                        int idx = imgX * 4; r = src[imgX]; g = src[imgX+1]; b = src[imgX+2]; a = src[imgX+3];
-                    } else if (pixelType == 0) {
-                        uint8_t v = src[imgX]; r = v; g = v; b = v;
-                        if (ctx->hasTransColor && v == (uint8_t)ctx->transColor) a = 0;
-                    } else if (pixelType == 4) {
-                        int idx = imgX * 2; uint8_t v = src[idx]; r = v; g = v; b = v; a = src[idx+1];
+                        int idx = (bpp == 16) ? (imgX * 8) : (imgX * 4);
+                        r = src[idx]; g = src[idx + (bpp==16?2:1)]; b = src[idx + (bpp==16?4:2)]; a = src[idx + (bpp==16?6:3)];
                     }
 
                     int targetIndex = framePixelOffset + (y * ctx->frameW) + x;
@@ -333,7 +337,7 @@ private:
         return 1;
     }
 
-    // --- 3. DIE LADEFUNKTION (Mit RAM-Load & Bugfix) ---
+    // --- 3. DIE SCHNELLE RAM-LADEFUNKTION ---
     AnimatedIcon* loadAnimFromPngSheet(String name, String filename, int frameW, int delayMs) {
         if (!LittleFS.exists(filename)) return nullptr;
         
@@ -342,17 +346,13 @@ private:
         
         size_t fileSize = f.size();
         uint8_t* pngFileData = (uint8_t*)heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM);
-        
         if (!pngFileData) { f.close(); return nullptr; }
         
         size_t bytesRead = 0;
         while (bytesRead < fileSize) {
             int32_t r = f.read(pngFileData + bytesRead, fileSize - bytesRead);
-            if (r < 0) break; // Echter Lesefehler
-            if (r == 0) {
-                delay(1); // Warte auf das Dateisystem
-                continue;
-            }
+            if (r < 0) break; 
+            if (r == 0) { delay(1); continue; }
             bytesRead += r;
         }
         f.close();
@@ -407,7 +407,7 @@ private:
         PngAnimContext ctx;
         ctx.pixels = anim->pixels; ctx.alpha = anim->alpha;
         ctx.frameW = frameW; ctx.frameH = frameH; ctx.frames = frames;
-        ctx.isVertical = isVertical; // Das funktioniert jetzt!
+        ctx.isVertical = isVertical; 
         int tColor = png.getTransparentColor(); 
         ctx.hasTransColor = (tColor != -1); ctx.transColor = (uint32_t)tColor;
 
