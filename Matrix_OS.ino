@@ -283,7 +283,8 @@ void setup() {
       delay(50); 
       if(ntpRetryCount++ > 40) break;
 } 
-  
+  weatherApp.setup(); // <--- NEU: WeatherApp initialisieren
+
   status("Start in 3s", display.color565(0, 255, 0));
   delay(3000); 
   isBooting = false;
@@ -324,6 +325,7 @@ void loop() {
             if (name == "testpattern") return TESTPATTERN;
             if (name == "ticker") return TICKER;
             if (name == "plasma") return PLASMA;
+            if (name == "weather") return WEATHER; // <--- NEU
             return OFF;
         };
 
@@ -333,6 +335,7 @@ void loop() {
             if (mode == TESTPATTERN) return &appTestPattern;
             if (mode == TICKER) return &appTicker;
             if (mode == PLASMA) return &appPlasma;
+            if (mode == WEATHER) return &weatherApp; // <--- NEU
             return nullptr;
         };
         // ---------------------------------------------
@@ -454,6 +457,7 @@ void loop() {
                case TESTPATTERN: screenUpdated = appTestPattern.draw(display, forceRedraw); break;
                case TICKER:      screenUpdated = appTicker.draw(display, forceRedraw); break;
                case PLASMA:      screenUpdated = appPlasma.draw(display, forceRedraw); break;
+               case WEATHER:     screenUpdated = weatherApp.draw(display, forceRedraw); break; // <--- NEU
                case OFF:         display.clear(); screenUpdated = true; break;
              }
              

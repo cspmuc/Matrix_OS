@@ -87,6 +87,7 @@ private:
             else if (newApp == "testpattern") currentAppRef = TESTPATTERN;
             else if (newApp == "ticker") currentAppRef = TICKER;
             else if (newApp == "plasma") currentAppRef = PLASMA;
+            else if (newApp == "weather") currentAppRef = WEATHER; // <--- NEU
             else if (newApp == "off") currentAppRef = OFF;
             else if (newApp == "auto") currentAppRef = AUTO; // <--- DIESE ZEILE HINZUFÜGEN!
             publishState(); 
@@ -351,6 +352,7 @@ public:
             case TESTPATTERN: appStr = "testpattern"; break;
             case TICKER:      appStr = "ticker"; break;
             case PLASMA:      appStr = "plasma"; break;
+            case WEATHER:     appStr = "weather"; break; // <--- NEU
             case AUTO:        appStr = "auto"; break; // <--- DIESE ZEILE HINZUFÜGEN
             default:          appStr = "off"; break;
         }
