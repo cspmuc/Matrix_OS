@@ -334,6 +334,7 @@ public:
                 if (serverReachable) {
                     if (client.connect(conf.network.hostname.c_str(), conf.mqtt.user.c_str(), conf.mqtt.pass.c_str(), "matrix/status", 0, true, "OFF")) {
                         client.subscribe("matrix/cmd/#");
+                        client.subscribe("matrix/data/#"); // <--- NEU: Jetzt lauscht er auch auf Wetterdaten!
                         publishState();
                         Serial.println("MQTT: Connected");
                     }
