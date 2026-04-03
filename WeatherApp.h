@@ -120,7 +120,4 @@ public:
         return 1; // Standard-Priorität
     }
     
-    String getName() override {
-        return "weather";
-    }
 };

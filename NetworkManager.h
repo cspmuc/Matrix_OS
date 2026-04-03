@@ -10,11 +10,13 @@
 #include "SensorApp.h" 
 #include <time.h> 
 #include <esp_heap_caps.h> 
+#include "WeatherApp.h" // <--- NEU: Damit der NetworkManager die App kennt!
 
 extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern void queueAnimation(OverlayType animType, int durationSec); // <--- NEU
+extern WeatherApp weatherApp;
 
 // Eigener Allocator für ArduinoJson, der den PSRAM zwingend nutzt
 #ifndef SPIRAM_ALLOCATOR_DEFINED
@@ -136,6 +138,11 @@ private:
             // NEU: Prio Parameter übergeben
             if (!items.empty()) sensorAppRef.updatePage(id, title, ttl, prio, items);
         }
+        // --- NEU: Wetterdaten empfangen ---
+        if (t == "matrix/data/weather") { 
+            weatherApp.updateData(doc);
+        }
+        // -----------------------------------
         delete doc;
     }
 
