@@ -1,88 +1,126 @@
 #pragma once
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include "App.h"
 #include "WeatherRenderer.h"
+
+// --- Datenstruktur für einen einzelnen Wetter-Datensatz ---
+struct WeatherData {
+    String condition = "unknown";
+    float temp = 0.0;     // Aktuelle Temp oder Min-Temp bei Vorhersage
+    float tempMax = 0.0;  // Max-Temp (nur Vorhersage)
+    float precip = 0.0;   // Niederschlagsmenge
+    float wind = 0.0;     // Windgeschwindigkeit
+    String day = "";      // "MO", "DI" etc. (nur Vorhersage)
+};
 
 class WeatherApp : public App {
 private:
     WeatherRenderer renderer;
     int currentFrame = 0;
     unsigned long lastFrameTime = 0;
+    const int frameDelay = 80; // 16 Frames, butterweich
+
+    // --- Datenspeicher ---
+    WeatherData currentW;
+    WeatherData forecasts[3];
     
-    // NEU: Da wir 16 Frames haben, senken wir das Delay für eine butterweiche Animation
-    const int frameDelay = 80; // Millisekunden pro Frame
+    unsigned long dataTimestamp = 0;
+    unsigned long dataValidityMs = 0;
+    bool hasData = false;
 
-    // Demo-Modus Variablen
-    unsigned long lastDemoSwitch = 0;
-    int demoIndex = 0;
-    String conditions[13] = {
-        "sunny", "clear-night", "cloudy", "partlycloudy", "partlycloudy-night",
-        "rainy", "pouring", "snowy", "lightning", "lightning-rain", 
-        "windy", "fog", "exceptional"
-    };
-
-    String currentCondition = "demo"; // Startet im Demo-Modus
+    // Hilfsfunktion: Zentriert Text perfekt in einer bestimmten Spalte (X-Koordinate)
+    void drawColText(DisplayManager& display, int cx, int y, String text, uint16_t color) {
+        int w = display.getTextWidth(text);
+        display.drawString(cx - (w / 2), y, text, color);
+    }
 
 public:
     WeatherApp() {}
 
-    // Setup wird einmalig beim Start von der Matrix_OS.ino aufgerufen
     void setup() {
         lastFrameTime = millis();
-        lastDemoSwitch = millis();
     }
 
-    // Die überschriebene draw-Funktion der App.h
+    // --- JSON auswerten (Wird vom NetworkManager aufgerufen) ---
+    void updateData(JsonDocument* doc) {
+        // Gültigkeit in Millisekunden umrechnen (Standard: 1 Stunde)
+        dataValidityMs = ((*doc)["validity"] | 3600) * 1000; 
+
+        // 1. Aktuelles Wetter parsen
+        if (doc->containsKey("current")) {
+            currentW.condition = (*doc)["current"]["cond"] | "unknown";
+            currentW.temp = (*doc)["current"]["temp"] | 0.0;
+            currentW.precip = (*doc)["current"]["precip"] | 0.0;
+            currentW.wind = (*doc)["current"]["wind"] | 0.0;
+        }
+
+        // 2. Vorhersagen parsen (Array mit 3 Einträgen)
+        if (doc->containsKey("forecasts") && (*doc)["forecasts"].is<JsonArray>()) {
+            JsonArray arr = (*doc)["forecasts"].as<JsonArray>();
+            for (int i = 0; i < 3 && i < arr.size(); i++) {
+                forecasts[i].day = arr[i]["day"].as<String>();
+                forecasts[i].condition = arr[i]["cond"].as<String>();
+                forecasts[i].temp = arr[i]["tmin"] | 0.0;
+                forecasts[i].tempMax = arr[i]["tmax"] | 0.0;
+                forecasts[i].precip = arr[i]["precip"] | 0.0;
+                forecasts[i].wind = arr[i]["wind"] | 0.0;
+            }
+        }
+        
+        dataTimestamp = millis();
+        hasData = true;
+    }
+
     bool draw(DisplayManager& display, bool force) override {
         bool needsRedraw = force;
 
-        // Animations-Taktgeber (NEU: 16 Frames!)
+        // Animations-Timer
         if (millis() - lastFrameTime >= frameDelay) {
-            currentFrame = (currentFrame + 1) % 16; // <--- Umschlagpunkt jetzt bei 16
+            currentFrame = (currentFrame + 1) % 16;
             lastFrameTime = millis();
             needsRedraw = true; 
         }
 
-        // Demo-Modus: Alle 5 Sekunden umschalten, damit der Loop voll durchläuft
-        if (currentCondition == "demo") {
-            if (millis() - lastDemoSwitch >= 5000) {
-                demoIndex = (demoIndex + 1) % 13;
-                lastDemoSwitch = millis();
-                currentFrame = 0;
-                needsRedraw = true;
-            }
-        }
-
-        // CPU schonen, wenn nichts gezeichnet werden muss
         if (!needsRedraw) return false;
-
-        // Display für das neue Frame leeren
         display.clear(); 
 
-        String drawCondition = (currentCondition == "demo") ? conditions[demoIndex] : currentCondition;
+        // --- Timeout / Fehlen der Daten abfangen ---
+        if (!hasData || (millis() - dataTimestamp > dataValidityMs)) {
+            display.drawCenteredString(M_HEIGHT / 2 + 4, "Warte auf Wetterdaten...", display.color565(150, 150, 150));
+            return true;
+        }
 
-        // Wir zeichnen das Icon zentriert in 24x24
+        // --- Das 3-Spalten Layout (Heute, Morgen, Übermorgen) ---
+        int colWidth = M_WIDTH / 3; // 128 / 3 = ca. 42 Pixel pro Spalte
         int iconSize = 24;
-        int x = (M_WIDTH - iconSize) / 2;
-        int y = (M_HEIGHT - iconSize) / 2;
 
-        renderer.drawWeatherIcon(display, x, y, iconSize, drawCondition, currentFrame);
+        for (int i = 0; i < 3; i++) {
+            // Die exakte X-Mitte der jeweiligen Spalte berechnen (21, 63, 105)
+            int cx = (i * colWidth) + (colWidth / 2); 
+            
+            // 1. Wochentag (Oben, y=12)
+            drawColText(display, cx, 12, forecasts[i].day, display.color565(200, 200, 200));
 
-        // Im Demo-Modus blenden wir den Namen der Bedingung unten klein ein
-        if (currentCondition == "demo") {
-            display.drawString(2, M_HEIGHT - 10, drawCondition, display.color565(100, 100, 100));
+            // 2. Animiertes Icon (Mitte, y=18)
+            int iconX = cx - (iconSize / 2); // Um die Spaltenmitte zentrieren
+            int iconY = 18;
+            renderer.drawWeatherIcon(display, iconX, iconY, iconSize, forecasts[i].condition, currentFrame);
+
+            // 3. Temperatur (Unten, y=56)
+            // Rundet die Floats auf ganze Zahlen und baut den String: z.B. "12/18"
+            String tempStr = String((int)round(forecasts[i].temp)) + "/" + String((int)round(forecasts[i].tempMax));
+            drawColText(display, cx, 56, tempStr, display.color565(100, 200, 255));
         }
 
         return true; 
     }
 
-    // MQTT Steuerung
-    void setCondition(String cond) {
-        currentCondition = cond;
-        currentFrame = 0;
-    }
-
     int getPriority() override {
-        return 1; // Standard-Prio
+        return 1; // Standard-Priorität
+    }
+    
+    String getName() override {
+        return "weather";
     }
 };
