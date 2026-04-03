@@ -16,7 +16,8 @@
 #include "WebManager.h"     
 #include "IconManager.h" 
 #include "ConfigManager.h"
-
+#include "WeatherApp.h"
+WeatherApp weatherApp;
 AppMode currentApp = WORDCLOCK;
 int brightness = 150; 
 
