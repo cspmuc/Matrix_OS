@@ -8,7 +8,9 @@ private:
     WeatherRenderer renderer;
     int currentFrame = 0;
     unsigned long lastFrameTime = 0;
-    const int frameDelay = 150; // Millisekunden pro Frame
+    
+    // NEU: Da wir 16 Frames haben, senken wir das Delay für eine butterweiche Animation
+    const int frameDelay = 80; // Millisekunden pro Frame
 
     // Demo-Modus Variablen
     unsigned long lastDemoSwitch = 0;
@@ -34,16 +36,16 @@ public:
     bool draw(DisplayManager& display, bool force) override {
         bool needsRedraw = force;
 
-        // Animations-Taktgeber (8 Frames)
+        // Animations-Taktgeber (NEU: 16 Frames!)
         if (millis() - lastFrameTime >= frameDelay) {
-            currentFrame = (currentFrame + 1) % 8;
+            currentFrame = (currentFrame + 1) % 16; // <--- Umschlagpunkt jetzt bei 16
             lastFrameTime = millis();
-            needsRedraw = true; // Frame hat gewechselt, wir müssen neu zeichnen!
+            needsRedraw = true; 
         }
 
-        // Demo-Modus: Alle 4 Sekunden umschalten
+        // Demo-Modus: Alle 5 Sekunden umschalten, damit der Loop voll durchläuft
         if (currentCondition == "demo") {
-            if (millis() - lastDemoSwitch >= 4000) {
+            if (millis() - lastDemoSwitch >= 5000) {
                 demoIndex = (demoIndex + 1) % 13;
                 lastDemoSwitch = millis();
                 currentFrame = 0;
@@ -51,7 +53,7 @@ public:
             }
         }
 
-        // Wenn sich nichts bewegt hat und kein Zwang (force) herrscht, brich ab um CPU zu sparen
+        // CPU schonen, wenn nichts gezeichnet werden muss
         if (!needsRedraw) return false;
 
         // Display für das neue Frame leeren
@@ -71,7 +73,7 @@ public:
             display.drawString(2, M_HEIGHT - 10, drawCondition, display.color565(100, 100, 100));
         }
 
-        return true; // Dem System sagen: Wir haben gezeichnet!
+        return true; 
     }
 
     // MQTT Steuerung
