@@ -34,7 +34,7 @@ private:
     bool hasData = false;
 
     unsigned long lastInfoToggle = 0;
-    bool showTemp = true; 
+    int infoPage = 0; // 0=Temperatur, 1=Niederschlag, 2=Wind
 
     void drawColRichText(DisplayManager& display, int cx, int y, String text) {
         int w = richText.getTextWidth(display, text, "Small");
@@ -89,9 +89,8 @@ public:
             needsRedraw = true; 
         }
 
-        // --- NEU: Anzeigezeit auf 10 Sekunden (10000 ms) erhöht ---
         if (millis() - lastInfoToggle >= 10000) {
-            showTemp = !showTemp;
+            infoPage = (infoPage + 1) % 3; 
             lastInfoToggle = millis();
             needsRedraw = true;
         }
@@ -105,39 +104,54 @@ public:
         }
 
         int colWidth = M_WIDTH / 3; 
-        int iconSize = 24;
 
         for (int i = 0; i < 3; i++) {
             int cx = (i * colWidth) + (colWidth / 2); 
             
-            // Wochentag
+            // 1. Wochentag (Immer gleich bei y=11)
             drawColRichText(display, cx, 11, "{c:#CCCCCC}" + forecasts[i].day);
 
-            // Icon
-            int iconX = cx - (iconSize / 2); 
-            int iconY = 16;
-            renderer.drawWeatherIcon(display, iconX, iconY, iconSize, forecasts[i].condition, currentFrame);
+            if (infoPage == 2) {
+                // ================================
+                // SEITE 3: WIND
+                // ================================
+                // Windrose, exakt gleich platziert wie Wetter-Icons
+                renderer.drawWindRose(display, cx, 28, 11, forecasts[i].windDir, currentFrame);
 
-            // Info-Bereich
-            if (showTemp) {
-                // --- NEU: Kompakter Temperatur-String ohne Leerzeichen ---
-                String minT = String((int)round(forecasts[i].temp));
-                String maxT = String((int)round(forecasts[i].tempMax));
-                String richTempStr = "{c:#64C8FF}" + minT + "{c:#888888}|{c:#FFC800}" + maxT;
-                drawColRichText(display, cx, 57, richTempStr);
+                // --- NEU: Wind wie Temperatur formatiert, mittig bei y=57 ---
+                String wSpeed = String((int)round(forecasts[i].wind));
+                String wGust = String((int)round(forecasts[i].windGust));
+                String richWindStr = "{c:#64C8FF}" + wSpeed + "{c:#888888}|{c:#FFC800}" + wGust;
+                drawColRichText(display, cx, 57, richWindStr);
+
             } else {
-                // --- NEU: Wahrscheinlichkeit ohne Icon ---
-                String probStr = "{c:#64C8FF}" + String(forecasts[i].precipProb) + "%";
-                drawColRichText(display, cx, 51, probStr);
+                // ================================
+                // SEITE 1 & 2: TEMPERATUR & REGEN
+                // ================================
+                int iconSize = 24;
+                int iconX = cx - (iconSize / 2); 
+                int iconY = 16;
+                renderer.drawWeatherIcon(display, iconX, iconY, iconSize, forecasts[i].condition, currentFrame);
 
-                // --- NEU: Menge 1 Pixel tiefer (y=64) ---
-                String mmStr;
-                if (forecasts[i].precip < 0.1) {
-                    mmStr = "0mm";
-                } else {
-                    mmStr = String(forecasts[i].precip, 1) + "mm";
+                if (infoPage == 0) {
+                    // SEITE 1: Temperatur
+                    String minT = String((int)round(forecasts[i].temp));
+                    String maxT = String((int)round(forecasts[i].tempMax));
+                    String richTempStr = "{c:#64C8FF}" + minT + "{c:#888888}|{c:#FFC800}" + maxT;
+                    drawColRichText(display, cx, 57, richTempStr);
+                } else if (infoPage == 1) {
+                    // SEITE 2: Regen
+                    String probStr = "{c:#64C8FF}" + String(forecasts[i].precipProb) + "%";
+                    drawColRichText(display, cx, 51, probStr);
+
+                    String mmStr;
+                    if (forecasts[i].precip < 0.1) {
+                        mmStr = "0mm";
+                    } else {
+                        mmStr = String(forecasts[i].precip, 1) + "mm";
+                    }
+                    drawColRichText(display, cx, 64, "{c:#AAAAAA}" + mmStr);
                 }
-                drawColRichText(display, cx, 64, "{c:#AAAAAA}" + mmStr);
             }
         }
 

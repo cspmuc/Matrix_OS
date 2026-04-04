@@ -4,7 +4,7 @@
 
 class WeatherRenderer {
 private:
-    uint16_t cYellow, cGold, cOrange, cBlue, cWhite, cLightGray, cDarkGray, cRain, cRed, cGreenLeaf, cMoon;
+    uint16_t cYellow, cGold, cOrange, cBlue, cWhite, cLightGray, cDarkGray, cRain, cRed, cGreenLeaf, cMoon, cWindArrow;
 
     void initColors(DisplayManager& d) {
         cYellow = d.color565(255, 220, 0);
@@ -17,7 +17,8 @@ private:
         cRain = d.color565(80, 150, 255);
         cRed = d.color565(255, 50, 50);
         cGreenLeaf = d.color565(50, 200, 50);
-        cMoon = d.color565(180, 180, 130); // Grau-Gelb für den Mond
+        cMoon = d.color565(180, 180, 130); 
+        cWindArrow = d.color565(255, 120, 120); // <--- NEU: Leichtes Rot für die Windrose
     }
 
     uint16_t getPulseColor(DisplayManager& d, uint16_t color1, uint16_t color2, int f, int totalFrames) {
@@ -77,22 +78,39 @@ private:
         d.drawPixel(x + s*0.5, y + s*0.1, getPulseColor(d, d.color565(10,10,10), cLightGray, f+8, 16)); 
     }
 
-    void drawCloud(DisplayManager& d, int x, int y, int s, int f, bool dark = false, float breathingRatio = 1.0f, bool nightCloud = false) {
-        float breathe = sin(f * (2.0f * PI / 16.0f)) * breathingRatio * (s * 0.05f);
-        int cy = (y + s * 0.55) - breathe;
+    // --- ERWEITERT: Kann nun horizontal oder vertikal schaukeln ---
+    void drawCloud(DisplayManager& d, int x, int y, int s, int f, bool dark = false, bool horizontalMotion = false, float motionRatio = 1.0f, bool nightCloud = false) {
+        float motionValue = sin(f * (2.0f * PI / 16.0f)) * motionRatio * (s * 0.05f);
+        
+        // Basis-Koordinaten
+        int cxM = x + s * 0.5;
+        int cxL = x + s * 0.25;
+        int cxR = x + s * 0.75;
+        int cy = y + s * 0.55; 
+
+        if (horizontalMotion) {
+            // NEU: Horizontal schaukeln
+            cxM += motionValue;
+            cxL += motionValue;
+            cxR += motionValue;
+        } else {
+            // Altes vertikales Atmen
+            cy -= motionValue; 
+        }
         
         uint16_t cMain = dark ? (nightCloud ? d.color565(110,110,110) : d.color565(80,80,80)) : cLightGray;
         uint16_t cShadow = dark ? (nightCloud ? d.color565(80,80,80) : d.color565(50,50,50)) : d.color565(170,170,170);
         
         int rMid = s * 0.25, rSide = s * 0.15;
-        int cxM = x + s * 0.5, cxL = x + s * 0.25, cxR = x + s * 0.75;
         
+        // Kreise mit dezentem Schatten
         d.fillCircle(cxM, cy - (s * 0.1), rMid, cMain);
         d.drawCircle(cxM, cy - (s * 0.1), rMid, cShadow);
         
         d.fillCircle(cxL, cy, rSide, cMain);
         d.fillCircle(cxR, cy, rSide, cMain);
         
+        // Den Boden mit Schatten glätten
         d.fillRect(cxL, cy - rSide, cxR - cxL, rSide + 1, cMain);
         d.drawLine(cxL, cy + rSide, cxR, cy + rSide, cShadow);
     }
@@ -125,9 +143,11 @@ private:
         }
     }
 
-    void drawLightning(DisplayManager& d, int x, int y, int s, int f) {
+    void drawLightning(DisplayManager& d, int x, int y, int s, int f, int swayOffset = 0) {
+        // Blitz: Hält für 2-3 Frames, pulsierend weiß/gelb
         if (f == 1 || f == 2 || f == 6 || f == 7) {
-            int cx = x + s/2, cy = y + s*0.5;
+            // NEU: swayOffset annehmen, damit der Blitz mit der Wolke schaukelt
+            int cx = (x + s/2) + swayOffset, cy = y + s*0.5;
             uint16_t cL = (f%2==0) ? cWhite : cYellow;
             d.drawLine(cx, cy, cx - 3, cy + s*0.2, cL);
             d.drawLine(cx - 3, cy + s*0.2, cx + 2, cy + s*0.2, cL);
@@ -135,34 +155,24 @@ private:
         }
     }
 
-    // --- NEU: Die extrem flüssige Pustewolke! ---
     void drawBlowingCloud(DisplayManager& d, int x, int y, int s, int f) {
-        // Horizontales Wackeln (statt vertikal)
         float swayX = sin(f * (2.0f * PI / 16.0f)) * (s * 0.06f); 
         int cloudS = s * 0.8;
         int cloudX = x + (s * 0.2) + swayX;
         
-        // Wolke zeichnen, aber das vertikale Atmen deaktivieren (breathingRatio = 0.0f)
-        drawCloud(d, cloudX, y, cloudS, f, false, 0.0f);
+        // Vertikales Atmen deaktivieren (breathingRatio = 0.0f)
+        drawCloud(d, cloudX, y, cloudS, f, false, false, 0.0f);
 
-        // Windlinien weich animieren (perfekter Loop über 16 Frames)
         for (int i = 0; i < 3; i++) {
             int lineY = y + s * 0.45 + (i * s * 0.15); 
-            
-            // t geht von 0.0 bis fast 1.0 innerhalb der 16 Frames
             float t = ((f + (i * 5)) % 16) / 16.0f; 
-            
-            // Wandert stetig nach links
             int startX = cloudX + (cloudS * 0.1) - (t * s * 0.8);
             int length = s * 0.2; 
             int endX = startX - length;
 
-            // Fade-In und Fade-Out Illusion (Dunkel am Rand, hell in der Mitte)
-            // Dadurch wird der Sprung von Frame 15 auf 0 unsichtbar!
             uint8_t bright = 50 + sin(t * PI) * 150; 
             uint16_t windC = d.color565(bright, bright, bright);
             
-            // Abkapseln, damit der Wind nicht aus dem Icon-Quadrat bläst
             if (startX > x) {
                 if (endX < x) endX = x; 
                 d.drawLine(endX, lineY, startX, lineY, windC);
@@ -182,40 +192,93 @@ private:
 public:
     WeatherRenderer() {}
 
+    // --- NEU: Redesign der Windrose als längliches Dreieck (Chevron) in Rot ---
+    void drawWindRose(DisplayManager& d, int cx, int cy, int r, int windDir, int currentFrame) {
+        initColors(d); 
+        
+        // Kompass-Ring mit N/O/S/W Markierungen
+        d.drawCircle(cx, cy, r, d.color565(60, 60, 60));
+        d.drawPixel(cx, cy - r, cLightGray); // Nord
+        d.drawPixel(cx, cy + r, cLightGray); // Süd
+        d.drawPixel(cx - r, cy, cLightGray); // West
+        d.drawPixel(cx + r, cy, cLightGray); // Ost
+
+        // Sinus-Schwankung (pendelt 15 Grad = PI/12)
+        float dir_rad = windDir * (PI / 180.0f);
+        float sway_rad = (PI / 12.0f) * sin(currentFrame * (2.0f * PI / 16.0f)); 
+        float math_angle_rad = (PI / 2.0f) - dir_rad + sway_rad;
+
+        // Geometrie des länglichen Dreiecks (Chevron)
+        // Richtungsvektor und Senkrechte
+        float vx_theta = cos(math_angle_rad);
+        float vy_theta = -sin(math_angle_rad); // Screen coords adjustment
+        float vx_perp = -vy_theta; // Senkrechte
+        float vy_perp = vx_theta;
+
+        // 1. Spitze (+0.9 Radius)
+        int tx = cx + vx_theta * (r * 0.9f);
+        int ty = cy + vy_theta * (r * 0.9f); 
+        
+        // 2. Rückseite Mitte (Einknickung, -0.3 Radius) -> Geht durch die Mitte
+        int rearIndentX = cx - vx_theta * (r * 0.3f);
+        int rearIndentY = cy - vy_theta * (r * 0.3f); 
+        
+        // 3. Rückseite Ecken (-0.6 Radius nach hinten, +/- 0.4 Radius zur Seite) -> Kürzer
+        int rearLX = cx - vx_theta * (r * 0.6f) + vx_perp * (r * 0.4f);
+        int rearLY = cy - vy_theta * (r * 0.6f) + vy_perp * (r * 0.4f);
+        int rearRX = cx - vx_theta * (r * 0.6f) - vx_perp * (r * 0.4f);
+        int rearRY = cy - vy_theta * (r * 0.6f) - vy_perp * (r * 0.4f);
+        
+        // Kontur zeichnen
+        d.drawLine(tx, ty, rearLX, rearLY, cWindArrow);
+        d.drawLine(rearLX, rearLY, rearIndentX, rearIndentY, cWindArrow);
+        d.drawLine(rearIndentX, rearIndentY, rearRX, rearRY, cWindArrow);
+        d.drawLine(rearRX, rearRY, tx, ty, cWindArrow);
+    }
+
     void drawWeatherIcon(DisplayManager& display, int x, int y, int size, String cond, int frame) {
         initColors(display);
         int f = frame % 16; 
 
-        if (cond == "sunny" || cond == "clear-day") {
-            drawSun(display, x, y, size, f);
-        } else if (cond == "clear-night") {
-            drawMoon(display, x, y, size, f);
-        } else if (cond == "cloudy") {
-            drawCloud(display, x, y, size, f, false);
-        } else if (cond == "partlycloudy") {
+        if (cond == "sunny" || cond == "clear-day") drawSun(display, x, y, size, f);
+        else if (cond == "clear-night") drawMoon(display, x, y, size, f);
+        
+        // NEU: cloudy schaukelt horizontal
+        else if (cond == "cloudy") drawCloud(display, x, y, size, f, false, true, 1.0f);
+        
+        else if (cond == "partlycloudy") {
             drawSun(display, x - size*0.1, y - size*0.1, size*0.8, f + 4); 
-            drawCloud(display, x + size*0.1, y + size*0.1, size*0.9, f, false, 0.5f);
+            // NEU: partlycloudy Wolke schaukelt horizontal
+            drawCloud(display, x + size*0.1, y + size*0.1, size*0.9, f, false, true, 0.5f);
         } else if (cond == "partlycloudy-night") {
             drawMoon(display, x - size*0.1, y - size*0.1, size*0.9, f); 
-            drawCloud(display, x + size*0.1, y + size*0.2, size*0.8, f, true, 0.4f, true);
+            // NEU: partlycloudy-night Wolke schaukelt horizontal
+            drawCloud(display, x + size*0.1, y + size*0.2, size*0.8, f, true, true, 0.4f, true);
         } else if (cond == "rainy") {
-            drawCloud(display, x, y - size*0.1, size, f, false);
+            drawCloud(display, x, y - size*0.1, size, f, false); // Behält vertikales Atmen
             drawPrecipitation(display, x, y, size, f, "rainy");
         } else if (cond == "pouring") {
-            drawCloud(display, x, y - size*0.1, size, f, true, 0.5f);
+            drawCloud(display, x, y - size*0.1, size, f, true, false, 0.5f);
             drawPrecipitation(display, x, y, size, f, "pouring");
         } else if (cond == "snowy") {
             drawCloud(display, x, y - size*0.1, size, f, false);
             drawPrecipitation(display, x, y, size, f, "snowy");
-        } else if (cond == "lightning") {
-            drawCloud(display, x, y - size*0.1, size, f, true);
-            drawLightning(display, x, y, size, f);
-        } else if (cond == "lightning-rain") {
+        } 
+        
+        else if (cond == "lightning") {
+            // NEU: lightning Wolke schaukelt horizontal
+            drawCloud(display, x, y - size*0.1, size, f, true, true, 1.0f);
+            // Blitz-Schaukeln berechnen
+            int swayOffset = sin(f * (2.0f * PI / 16.0f)) * (size * 0.05f);
+            drawLightning(display, x, y, size, f, swayOffset);
+        } 
+        
+        else if (cond == "lightning-rain") {
             drawCloud(display, x, y - size*0.1, size, f, true);
             drawPrecipitation(display, x, y, size, f, "pouring"); 
             drawLightning(display, x, y, size, f);
         } else if (cond == "windy") {
-            drawBlowingCloud(display, x, y, size, f); // <--- NEU: Pustewolke aufrufen
+            drawBlowingCloud(display, x, y, size, f);
         } else if (cond == "fog") {
             drawFogRedesign(display, x, y, size, f);
         } else if (cond == "exceptional") {
