@@ -18,6 +18,14 @@ struct WeatherData {
     int precipProb = 0;     
 };
 
+// --- NEU: Struktur für die lokalen Sensordaten ---
+struct LocalSensorData {
+    int co2 = 0;
+    float humidity = 0.0;
+    float pm25 = 0.0;
+    int voc = 0;
+};
+
 class WeatherApp : public App {
 private:
     WeatherRenderer renderer;
@@ -28,6 +36,7 @@ private:
 
     WeatherData currentW;
     WeatherData forecasts[3];
+    LocalSensorData localSensors; // <--- NEU: Speicher für die lokalen Daten
     
     unsigned long dataTimestamp = 0;
     unsigned long dataValidityMs = 0;
@@ -75,6 +84,14 @@ public:
                 forecasts[i].precipProb = arr[i]["precip_prob"] | 0;
             }
         }
+
+        // --- NEU: Lokale Sensordaten parsen ---
+        if (doc->containsKey("local")) {
+            localSensors.co2 = (*doc)["local"]["co2"] | 0;
+            localSensors.humidity = (*doc)["local"]["humidity"] | 0.0;
+            localSensors.pm25 = (*doc)["local"]["pm25"] | 0.0;
+            localSensors.voc = (*doc)["local"]["voc"] | 0;
+        }
         
         dataTimestamp = millis();
         hasData = true;
@@ -108,17 +125,14 @@ public:
         for (int i = 0; i < 3; i++) {
             int cx = (i * colWidth) + (colWidth / 2); 
             
-            // 1. Wochentag (Immer gleich bei y=11)
             drawColRichText(display, cx, 11, "{c:#CCCCCC}" + forecasts[i].day);
 
             if (infoPage == 2) {
                 // ================================
                 // SEITE 3: WIND
                 // ================================
-                // Windrose, exakt gleich platziert wie Wetter-Icons
                 renderer.drawWindRose(display, cx, 28, 11, forecasts[i].windDir, currentFrame);
 
-                // --- NEU: Wind wie Temperatur formatiert, mittig bei y=57 ---
                 String wSpeed = String((int)round(forecasts[i].wind));
                 String wGust = String((int)round(forecasts[i].windGust));
                 String richWindStr = "{c:#64C8FF}" + wSpeed + "{c:#888888}|{c:#FFC800}" + wGust;
