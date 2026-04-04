@@ -42,7 +42,10 @@ private:
     bool hasData = false;
 
     unsigned long lastInfoToggle = 0;
-    int infoPage = 0; // 0=Temp, 1=Regen, 2=Wind, 3=Aktuell/Lokal
+    int infoPage = 0; 
+    bool cycleComplete = false;
+    float currentMultiplier = 1.0; 
+    const int BASE_SWITCH_DELAY = 12000; // Standard: 12 Sekunden
 
     void drawColRichText(DisplayManager& display, int cx, int y, String text) {
         int w = richText.getTextWidth(display, text, "Small");
@@ -55,6 +58,18 @@ public:
     void setup() {
         lastFrameTime = millis();
         lastInfoToggle = millis(); 
+    }
+
+    void onActive() override {
+        cycleComplete = false;
+        infoPage = 0; 
+        lastInfoToggle = millis();
+        currentMultiplier = 1.0;
+    }
+
+    bool isReadyToSwitch(float durationMultiplier = 1.0) override {
+        currentMultiplier = durationMultiplier; 
+        return cycleComplete;
     }
 
     void updateData(JsonDocument* doc) {
@@ -104,58 +119,71 @@ public:
             needsRedraw = true; 
         }
 
-        if (millis() - lastInfoToggle >= 10000) {
-            infoPage = (infoPage + 1) % 4; 
-            lastInfoToggle = millis();
-            needsRedraw = true;
-        }
-
-        if (!needsRedraw) return false;
-        display.clear(); 
-
+        // ==========================================
+        // 1. FEHLENDE DATEN: Nach 3 Sekunden abbrechen
+        // ==========================================
         if (!hasData || (millis() - dataTimestamp > dataValidityMs)) {
+            if (millis() - lastInfoToggle > 3000) {
+                cycleComplete = true; // Dem OS nach 3s den Wechsel erlauben!
+            }
+            if (!needsRedraw) return false;
+            display.clear();
             richText.drawCentered(display, M_HEIGHT / 2 + 4, "{c:muted}No Weather!", "Small");
             return true;
         }
 
         // ==========================================
-        // SEITE 4: Aktuelles Wetter & Lokale Sensoren
+        // 2. NORMALE SEITEN-LOGIK
         // ==========================================
-        if (infoPage == 3) {
-            // 1. Überschrift "Feldmoching" komplett zentriert
-            richText.drawCentered(display, 11, "{c:#FFC800}Feldmoching", "Small");
+        unsigned long switchDelay = BASE_SWITCH_DELAY * currentMultiplier;
 
-            // 2. Vertikale Trennlinie (X=66, leicht nach rechts gerückt)
+        if (millis() - lastInfoToggle >= switchDelay) {
+            if (cycleComplete && currentApp == AUTO) {
+                // AUTO-MODUS: Wir frieren auf der letzten Seite ein und warten aufs Fade-Out
+            } else {
+                lastInfoToggle = millis();
+                infoPage++;
+                
+                if (infoPage >= 4) {
+                    cycleComplete = true; 
+                    if (currentApp == AUTO) {
+                        infoPage = 3; 
+                    } else {
+                        infoPage = 0; 
+                    }
+                }
+                needsRedraw = true;
+            }
+        }
+
+        if (!needsRedraw) return false;
+        display.clear(); 
+
+        // ==========================================
+        // SEITE 1 (infoPage == 0): Aktuelles Wetter & Lokale Sensoren
+        // ==========================================
+        if (infoPage == 0) {
+            richText.drawCentered(display, 11, "{c:#FFC800}Feldmoching", "Small");
             display.drawLine(66, 15, 66, 62, display.color565(60, 60, 60));
 
-            // --- LINKE SEITE ---
             int iconSize = 30;
             int iconX = 32 - (iconSize / 2); 
             int iconY = 15; 
             renderer.drawWeatherIcon(display, iconX, iconY, iconSize, currentW.condition, currentFrame);
 
-            // Temperatur 1 Pixel weiter unten (y=61)
             String tempStr = "{ln:2056} {c:white}" + String(localSensors.ltemp, 1) + "°C";
             drawColRichText(display, 32, 61, tempStr);
 
-            // --- RECHTE SEITE ---
-            // 3 Pixel weiter nach rechts gerückt (X=71)
             int tx = 71; 
-            
-            // Feuchtigkeit 1 Pixel weiter unten (y=26)
             richText.drawString(display, tx, 26, "{ln:53330} {c:white}" + String(localSensors.humidity, 0) + "%", "Small");
-            
-            // PM2.5 1 Pixel weiter unten (y=43)
             richText.drawString(display, tx, 43, "{ln:65316} {c:white}" + String(localSensors.pm25, 1), "Small");
-            
-            // VOC 1 Pixel weiter unten (y=60)
             richText.drawString(display, tx, 60, "{la:37364} {c:white}" + String(localSensors.voc), "Small");
             
             return true;
         }
 
         // ==========================================
-        // SEITEN 1 bis 3: Die 3-Tages-Vorhersage
+        // SEITEN 2 bis 4: Die 3-Tages-Vorhersage
         // ==========================================
         int colWidth = M_WIDTH / 3; 
 
@@ -164,7 +192,7 @@ public:
             
             drawColRichText(display, cx, 11, "{c:#CCCCCC}" + forecasts[i].day);
 
-            if (infoPage == 2) {
+            if (infoPage == 3) {
                 // WIND
                 renderer.drawWindRose(display, cx, 28, 11, forecasts[i].windDir, currentFrame);
 
@@ -180,14 +208,12 @@ public:
                 int iconY = 16;
                 renderer.drawWeatherIcon(display, iconX, iconY, iconSize, forecasts[i].condition, currentFrame);
 
-                if (infoPage == 0) {
-                    // Temperatur
+                if (infoPage == 1) {
                     String minT = String((int)round(forecasts[i].temp));
                     String maxT = String((int)round(forecasts[i].tempMax));
                     String richTempStr = "{c:#64C8FF}" + minT + "{c:#888888}|{c:#FFC800}" + maxT;
                     drawColRichText(display, cx, 57, richTempStr);
-                } else if (infoPage == 1) {
-                    // Regen
+                } else if (infoPage == 2) {
                     String probStr = "{c:#64C8FF}" + String(forecasts[i].precipProb) + "%";
                     drawColRichText(display, cx, 51, probStr);
 
