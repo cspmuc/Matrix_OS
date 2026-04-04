@@ -5,8 +5,6 @@
 #include "WeatherRenderer.h"
 #include "RichText.h" 
 
-// KEINE fehlerhaften "extern" Zeilen mehr hier oben! Das OS kennt sie aus der config.h!
-
 struct WeatherData {
     String condition = "unknown";
     float temp = 0.0;     
@@ -47,7 +45,7 @@ private:
     int infoPage = 0; 
     bool cycleComplete = false;
     float currentMultiplier = 1.0; 
-    const int BASE_SWITCH_DELAY = 12000; // Standard: 12 Sekunden
+    const int BASE_SWITCH_DELAY = 12000; 
 
     void drawColRichText(DisplayManager& display, int cx, int y, String text) {
         int w = richText.getTextWidth(display, text, "Small");
@@ -121,38 +119,26 @@ public:
             needsRedraw = true; 
         }
 
-        // ==========================================
-        // 1. FEHLENDE DATEN: Nach 3 Sekunden abbrechen
-        // ==========================================
         if (!hasData || (millis() - dataTimestamp > dataValidityMs)) {
-            if (millis() - lastInfoToggle > 3000) {
-                cycleComplete = true; // Dem OS nach 3s den Wechsel erlauben!
-            }
+            if (millis() - lastInfoToggle > 3000) cycleComplete = true; 
             if (!needsRedraw) return false;
             display.clear();
             richText.drawCentered(display, M_HEIGHT / 2 + 4, "{c:muted}No Weather!", "Small");
             return true;
         }
 
-        // ==========================================
-        // 2. NORMALE SEITEN-LOGIK
-        // ==========================================
         unsigned long switchDelay = BASE_SWITCH_DELAY * currentMultiplier;
 
         if (millis() - lastInfoToggle >= switchDelay) {
             if (cycleComplete && currentApp == AUTO) {
-                // AUTO-MODUS: Wir frieren auf der letzten Seite ein und warten aufs Fade-Out
+                // Warten auf Fade
             } else {
                 lastInfoToggle = millis();
                 infoPage++;
-                
                 if (infoPage >= 4) {
                     cycleComplete = true; 
-                    if (currentApp == AUTO) {
-                        infoPage = 3; 
-                    } else {
-                        infoPage = 0; 
-                    }
+                    if (currentApp == AUTO) infoPage = 3; 
+                    else infoPage = 0; 
                 }
                 needsRedraw = true;
             }
@@ -162,24 +148,42 @@ public:
         display.clear(); 
 
         // ==========================================
-        // SEITE 1 (infoPage == 0): Aktuelles Wetter & Lokale Sensoren
+        // SEITE 1: Aktuelles Wetter & Lokale Sensoren
         // ==========================================
         if (infoPage == 0) {
             richText.drawCentered(display, 11, "{c:#FFC800}Feldmoching", "Small");
             display.drawLine(66, 15, 66, 62, display.color565(60, 60, 60));
 
+            // --- LINKE SEITE ---
             int iconSize = 30;
             int iconX = 32 - (iconSize / 2); 
             int iconY = 15; 
             renderer.drawWeatherIcon(display, iconX, iconY, iconSize, currentW.condition, currentFrame);
 
-            String tempStr = "{ln:2056} {c:white}" + String(localSensors.ltemp, 1) + "°C";
-            drawColRichText(display, 32, 61, tempStr);
+            // Temperatur: Textbreite berechnen, um das 16px Thermometer direkt davor zu zentrieren
+            String tempText = "{c:white}" + String(localSensors.ltemp, 1) + "°C";
+            int tW = richText.getTextWidth(display, tempText, "Small");
+            int totalTempW = 16 + 2 + tW; 
+            int tX = 32 - (totalTempW / 2);
 
-            int tx = 71; 
-            richText.drawString(display, tx, 26, "{ln:53330} {c:white}" + String(localSensors.humidity, 0) + "%", "Small");
-            richText.drawString(display, tx, 43, "{ln:65316} {c:white}" + String(localSensors.pm25, 1), "Small");
-            richText.drawString(display, tx, 60, "{la:37364} {c:white}" + String(localSensors.voc), "Small");
+            renderer.drawThermometer(display, tX, 49, 16, currentFrame, localSensors.ltemp);
+            richText.drawString(display, tX + 18, 61, tempText, "Small");
+
+            // --- RECHTE SEITE ---
+            int tx = 68; // Start X für die rechte Spalte
+            
+            // Feuchtigkeit (Bleibt das LaMetric Icon. Wir rücken es 3px ein, damit es sich optisch 
+            // an den etwas größeren, gerenderten 14px Icons von PM und VOC ausrichtet)
+            richText.drawString(display, tx + 3, 26, "{ln:53330}", "Small");
+            richText.drawString(display, tx + 16, 26, "{c:white}" + String(localSensors.humidity, 0) + "%", "Small");
+            
+            // PM2.5: 14x14 Icon wird direkt vor dem Text gerendert
+            renderer.drawPM25(display, tx, 31, 14, currentFrame, localSensors.pm25);
+            richText.drawString(display, tx + 16, 43, "{c:white}" + String(localSensors.pm25, 1), "Small");
+            
+            // VOC: 14x14 Icon
+            renderer.drawVOC(display, tx, 48, 14, currentFrame, localSensors.voc);
+            richText.drawString(display, tx + 16, 60, "{c:white}" + String(localSensors.voc), "Small");
             
             return true;
         }
@@ -231,6 +235,5 @@ public:
         return true; 
     }
 
-    // Prio 3 = Normal / Niedrige Priorität
     int getPriority() override { return 3; }
 };
