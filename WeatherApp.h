@@ -3,25 +3,25 @@
 #include <ArduinoJson.h>
 #include "App.h"
 #include "WeatherRenderer.h"
+#include "RichText.h" // <--- Einbinden der RichText Engine!
 
-// --- Datenstruktur für einen einzelnen Wetter-Datensatz ---
 struct WeatherData {
     String condition = "unknown";
-    float temp = 0.0;     // Aktuelle Temp oder Min-Temp bei Vorhersage
-    float tempMax = 0.0;  // Max-Temp (nur Vorhersage)
-    float precip = 0.0;   // Niederschlagsmenge
-    float wind = 0.0;     // Windgeschwindigkeit
-    String day = "";      // "MO", "DI" etc. (nur Vorhersage)
+    float temp = 0.0;     
+    float tempMax = 0.0;  
+    float precip = 0.0;   
+    float wind = 0.0;     
+    String day = "";      
 };
 
 class WeatherApp : public App {
 private:
     WeatherRenderer renderer;
+    RichText richText; // <--- Instanz für die Textausgabe
     int currentFrame = 0;
     unsigned long lastFrameTime = 0;
-    const int frameDelay = 80; // 16 Frames, butterweich
+    const int frameDelay = 80; 
 
-    // --- Datenspeicher ---
     WeatherData currentW;
     WeatherData forecasts[3];
     
@@ -29,10 +29,11 @@ private:
     unsigned long dataValidityMs = 0;
     bool hasData = false;
 
-    // Hilfsfunktion: Zentriert Text perfekt in einer bestimmten Spalte (X-Koordinate)
-    void drawColText(DisplayManager& display, int cx, int y, String text, uint16_t color) {
-        int w = display.getTextWidth(text);
-        display.drawString(cx - (w / 2), y, text, color);
+    // Hilfsfunktion: Zentriert einen RichText-String perfekt in einer Spalte
+    void drawColRichText(DisplayManager& display, int cx, int y, String text) {
+        // "Small" ist ein guter Kompromiss für die 3 Spalten
+        int w = richText.getTextWidth(display, text, "Small");
+        richText.drawString(display, cx - (w / 2), y, text, "Small");
     }
 
 public:
@@ -42,12 +43,9 @@ public:
         lastFrameTime = millis();
     }
 
-    // --- JSON auswerten (Wird vom NetworkManager aufgerufen) ---
     void updateData(JsonDocument* doc) {
-        // Gültigkeit in Millisekunden umrechnen (Standard: 1 Stunde)
         dataValidityMs = ((*doc)["validity"] | 3600) * 1000; 
 
-        // 1. Aktuelles Wetter parsen
         if (doc->containsKey("current")) {
             currentW.condition = (*doc)["current"]["cond"] | "unknown";
             currentW.temp = (*doc)["current"]["temp"] | 0.0;
@@ -55,7 +53,6 @@ public:
             currentW.wind = (*doc)["current"]["wind"] | 0.0;
         }
 
-        // 2. Vorhersagen parsen (Array mit 3 Einträgen)
         if (doc->containsKey("forecasts") && (*doc)["forecasts"].is<JsonArray>()) {
             JsonArray arr = (*doc)["forecasts"].as<JsonArray>();
             for (int i = 0; i < 3 && i < arr.size(); i++) {
@@ -75,7 +72,6 @@ public:
     bool draw(DisplayManager& display, bool force) override {
         bool needsRedraw = force;
 
-        // Animations-Timer
         if (millis() - lastFrameTime >= frameDelay) {
             currentFrame = (currentFrame + 1) % 16;
             lastFrameTime = millis();
@@ -85,40 +81,39 @@ public:
         if (!needsRedraw) return false;
         display.clear(); 
 
-        // --- Timeout / Fehlen der Daten abfangen ---
         if (!hasData || (millis() - dataTimestamp > dataValidityMs)) {
-            // NEU: Kürzerer und knackigerer Text!
-            display.drawCenteredString(M_HEIGHT / 2 + 4, "No Weather!", display.color565(150, 150, 150));
+            // Auch hier nutzen wir direkt RichText
+            richText.drawCentered(display, M_HEIGHT / 2 + 4, "{c:muted}No Weather!", "Small");
             return true;
         }
 
-        // --- Das 3-Spalten Layout (Heute, Morgen, Übermorgen) ---
-        int colWidth = M_WIDTH / 3; // 128 / 3 = ca. 42 Pixel pro Spalte
+        int colWidth = M_WIDTH / 3; 
         int iconSize = 24;
 
         for (int i = 0; i < 3; i++) {
-            // Die exakte X-Mitte der jeweiligen Spalte berechnen (21, 63, 105)
             int cx = (i * colWidth) + (colWidth / 2); 
             
-            // 1. Wochentag (Oben, y=12)
-            drawColText(display, cx, 12, forecasts[i].day, display.color565(200, 200, 200));
+            // 1. Wochentag (Grau)
+            drawColRichText(display, cx, 12, "{c:#CCCCCC}" + forecasts[i].day);
 
-            // 2. Animiertes Icon (Mitte, y=18)
-            int iconX = cx - (iconSize / 2); // Um die Spaltenmitte zentrieren
+            // 2. Animiertes Icon
+            int iconX = cx - (iconSize / 2); 
             int iconY = 18;
             renderer.drawWeatherIcon(display, iconX, iconY, iconSize, forecasts[i].condition, currentFrame);
 
-            // 3. Temperatur (Unten, y=56)
-            // Rundet die Floats auf ganze Zahlen und baut den String: z.B. "12/18"
-            String tempStr = String((int)round(forecasts[i].temp)) + "/" + String((int)round(forecasts[i].tempMax));
-            drawColText(display, cx, 56, tempStr, display.color565(100, 200, 255));
+            // 3. Temperatur mit RichText (OHNE Leerzeichen, natürliche Schriftbreite!)
+            String minT = String((int)round(forecasts[i].temp));
+            String maxT = String((int)round(forecasts[i].tempMax));
+            
+            // Wir nutzen Hex-Codes für exakte Farben: 
+            // Hellblau: #64C8FF, Grau: #888888, Kräftiges Gelb: #FFC800
+            String richTempStr = "{c:#64C8FF}" + minT + "{c:#888888}|{c:#FFC800}" + maxT;
+            
+            drawColRichText(display, cx, 56, richTempStr);
         }
 
         return true; 
     }
 
-    int getPriority() override {
-        return 1; // Standard-Priorität
-    }
-    
+    int getPriority() override { return 1; }
 };
