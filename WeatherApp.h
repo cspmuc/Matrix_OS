@@ -5,6 +5,8 @@
 #include "WeatherRenderer.h"
 #include "RichText.h" 
 
+// --- FEHLERHAFTE EXTERN ZEILEN WURDEN ENTFERNT ---
+
 struct WeatherData {
     String condition = "unknown";
     float temp = 0.0;     
@@ -160,7 +162,7 @@ public:
             int iconY = 15; 
             renderer.drawWeatherIcon(display, iconX, iconY, iconSize, currentW.condition, currentFrame);
 
-            // Temperatur: Textbreite berechnen, um das 16px Thermometer direkt davor zu zentrieren
+            // Temperatur
             String tempText = "{c:white}" + String(localSensors.ltemp, 1) + "°C";
             int tW = richText.getTextWidth(display, tempText, "Small");
             int totalTempW = 16 + 2 + tW; 
@@ -170,18 +172,17 @@ public:
             richText.drawString(display, tX + 18, 61, tempText, "Small");
 
             // --- RECHTE SEITE ---
-            int tx = 68; // Start X für die rechte Spalte
+            int tx = 71; 
             
-            // Feuchtigkeit (Bleibt das LaMetric Icon. Wir rücken es 3px ein, damit es sich optisch 
-            // an den etwas größeren, gerenderten 14px Icons von PM und VOC ausrichtet)
-            richText.drawString(display, tx + 3, 26, "{ln:53330}", "Small");
+            // Feuchtigkeit
+            renderer.drawHumidity(display, tx, 14, 14, currentFrame, localSensors.humidity);
             richText.drawString(display, tx + 16, 26, "{c:white}" + String(localSensors.humidity, 0) + "%", "Small");
             
-            // PM2.5: 14x14 Icon wird direkt vor dem Text gerendert
+            // PM2.5
             renderer.drawPM25(display, tx, 31, 14, currentFrame, localSensors.pm25);
             richText.drawString(display, tx + 16, 43, "{c:white}" + String(localSensors.pm25, 1), "Small");
             
-            // VOC: 14x14 Icon
+            // VOC
             renderer.drawVOC(display, tx, 48, 14, currentFrame, localSensors.voc);
             richText.drawString(display, tx + 16, 60, "{c:white}" + String(localSensors.voc), "Small");
             

@@ -225,25 +225,32 @@ public:
         d.drawLine(rearRX, rearRY, tx, ty, cWindArrow);
     }
 
-    // --- NEU: Thermometer Animation ---
+    // --- ANGEPASST: Thermometer (Länger, Blase tiefer, Röhrchen breiter) ---
     void drawThermometer(DisplayManager& d, int x, int y, int s, int f, float temp) {
         initColors(d);
         int cx = x + s / 2;
-        int br = s * 0.25f; // Blasen-Radius
-        int by = y + s - br - 1; // Blasen-Zentrum Y
-        int tw = s * 0.3f; // Röhren-Breite
-        if (tw < 2) tw = 2;
+        int br = s * 0.22f; 
+        if (br < 2) br = 2;
+        
+        // Blase 1 Pixel tiefer (war -3, jetzt -2), dadurch wird das Röhrchen länger!
+        int by = y + s - br - 2; 
+        
+        // Röhrchen 1 Pixel breiter machen
+        int tw = (s * 0.3f) + 1;  
+        if (tw < 4) tw = 4; 
+        
         int tx = cx - tw / 2;
-        int ty = y + 1;
+        int ty = y + 3; // Startpunkt der Röhre bleibt, dadurch wächst sie in die Länge
         int th = by - ty;
 
         // 1. Hintergrund / Umrandung malen
-        d.fillCircle(cx, by, br, cLightGray);
-        d.fillRect(tx, ty, tw, th, cLightGray);
+        d.fillCircle(cx, by, br, cLightGray); // Blase unten
+        d.fillRect(tx, ty, tw, th, cLightGray); // Rechteckige Röhre
+        d.drawLine(tx + 1, ty - 1, tx + tw - 2, ty - 1, cLightGray); // Runde Kappe oben!
         
         // 2. Innenraum freimachen
         d.fillCircle(cx, by, br - 1, 0x0000);
-        d.fillRect(tx + 1, ty + 1, tw - 2, th, 0x0000);
+        d.fillRect(tx + 1, ty, tw - 2, th, 0x0000);
 
         // 3. Farbe berechnen (Blau -> Cyan -> Gelb -> Rot)
         float t = constrain(temp, 0.0f, 30.0f);
@@ -256,44 +263,74 @@ public:
             b = map((int)t, 0, 30, 255, 50);
         }
 
-        // Helligkeit leicht pulsieren lassen
         float pulse = 0.7f + 0.3f * sin(f * 2.0f * PI / 16.0f);
         r *= pulse; g *= pulse; b *= pulse;
         uint16_t liqC = d.color565(r, g, b);
 
-        // Höhe der Flüssigkeit (von -10 bis 30 mappen, damit es bei 0 Grad nicht leer aussieht)
         float fillRatio = (constrain(temp, -10.0f, 30.0f) + 10.0f) / 40.0f;
-        int fillH = fillRatio * (th - 1);
+        int fillH = fillRatio * th;
 
         // 4. Flüssigkeit einfüllen
         d.fillCircle(cx, by, br - 1, liqC);
         if (fillH > 0) d.fillRect(tx + 1, by - fillH, tw - 2, fillH, liqC);
     }
 
-    // --- NEU: PM2.5 Feinstaub Animation ---
+    // --- Luftfeuchtigkeit (Tropfen) ---
+    void drawHumidity(DisplayManager& d, int x, int y, int s, int f, float humidity) {
+        initColors(d);
+        
+        float sizeRatio = 1.0f;
+        if (humidity < 50.0f) sizeRatio = 0.5f;
+        else if (humidity >= 80.0f) sizeRatio = 0.75f; 
+        else {
+            sizeRatio = 0.5f + ((humidity - 50.0f) / 30.0f) * 0.25f;
+        }
+        
+        float pulse = 0.95f + 0.05f * sin(f * 2.0f * PI / 16.0f);
+        sizeRatio *= pulse;
+        
+        int dropS = s * sizeRatio;
+        if (dropS < 4) dropS = 4;
+        
+        int cx = x + s / 2;
+        int r = dropS / 2;
+        int cy = y + s - r - 1; 
+        
+        uint16_t dropC = d.color565(50, 150, 255); 
+        
+        d.fillCircle(cx, cy, r, dropC);
+        
+        int tipY = cy - r - (dropS * 0.4f);
+        d.drawLine(cx - r, cy, cx, tipY, dropC);
+        d.drawLine(cx + r, cy, cx, tipY, dropC);
+        
+        for (int iy = tipY; iy <= cy; iy++) {
+            float timeRatio = (float)(iy - tipY) / (cy - tipY);
+            int halfW = r * timeRatio;
+            d.drawFastHLine(cx - halfW, iy, halfW * 2 + 1, dropC);
+        }
+        
+        d.drawPixel(cx + r/2, cy - r/2, cWhite);
+    }
+
+    // --- PM2.5 Feinstaub ---
     void drawPM25(DisplayManager& d, int x, int y, int s, int f, float pm25) {
         initColors(d);
         int count = (pm25 <= 7.0f) ? 4 : (pm25 > 25.0f ? 12 : 8);
         for (int i = 0; i < count; i++) {
             float t = ((f + i * 5) % 16) / 16.0f;
-            
-            // Startposition generieren
             int sx = x + 1 + (i * 7) % (s - 2);
             int sy = y + s - 1 - (i * 5) % (s - 2);
             
-            // Diagonaler Drift nach rechts oben
             int px = sx + (t * s * 0.4f);
             int py = sy - (t * s * 0.6f);
             
-            // Umbruch an den Rändern für Endlos-Effekt
             if (px >= x + s) px -= s;
             if (py < y) py += s;
             
-            // Fade-In / Fade-Out und leichtes Flackern
             uint8_t bright = sin(t * PI) * (150 + (i % 2) * 105);
             uint16_t color = d.color565(bright, bright, bright);
             
-            // Bei starker Belastung große Partikel untermischen
             if (i % 3 == 0 && pm25 > 15.0f) {
                 d.fillRect(px, py, 2, 2, color);
             } else {
@@ -302,24 +339,24 @@ public:
         }
     }
 
-    // --- NEU: VOC Ausdünstung / Geruch ---
+    // --- VOC Ausdünstung ---
     void drawVOC(DisplayManager& d, int x, int y, int s, int f, int voc) {
         initColors(d);
         uint16_t baseColor;
-        if (voc < 90) baseColor = d.color565(50, 220, 50); // Gut: Frisches Grün
-        else if (voc <= 110) baseColor = d.color565(180, 180, 180); // Neutral: Grau
-        else baseColor = d.color565(220, 50, 255); // Schlecht: Toxisches Violett
+        if (voc < 90) baseColor = d.color565(50, 220, 50); // Grünlich (Verbesserung)
+        else if (voc <= 110) baseColor = d.color565(180, 180, 180); // Neutral (Grau)
+        else if (voc < 200) baseColor = d.color565(220, 220, 50); // Gelblich (Verschlechterung)
+        else if (voc < 300) baseColor = d.color565(255, 100, 50); // Rötlich
+        else baseColor = d.color565(220, 50, 255); // Toxisch Lila
 
-        int lines = (voc > 110) ? 4 : 3; // Mehr Schwaden bei Gestank
+        int lines = (voc > 110) ? ((voc >= 200) ? 4 : 3) : 2; // Mehr Schwaden bei schlechter Luft
         for (int i = 0; i < lines; i++) {
             float startX = x + s * 0.2f + i * (s * 0.8f / lines);
             for (int j = 0; j < s * 0.8f; j++) {
                 int py = y + s * 0.9f - j;
-                // Sinuswelle, die nach oben steigt
                 float wave = sin(j * 0.5f - f * (2.0f * PI / 16.0f) + i) * (s * 0.15f);
                 int px = startX + wave;
                 
-                // Nach oben hin verblassen (Fade-Out)
                 float fade = 1.0f - (j / (s * 0.8f));
                 uint8_t r = (((baseColor >> 11) & 0x1F) << 3) * fade;
                 uint8_t g = (((baseColor >> 5) & 0x3F) << 2) * fade;
