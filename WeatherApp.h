@@ -5,6 +5,8 @@
 #include "WeatherRenderer.h"
 #include "RichText.h" 
 
+// KEINE fehlerhaften "extern" Zeilen mehr hier oben! Das OS kennt sie aus der config.h!
+
 struct WeatherData {
     String condition = "unknown";
     float temp = 0.0;     
@@ -229,5 +231,6 @@ public:
         return true; 
     }
 
-    int getPriority() override { return 1; }
+    // Prio 3 = Normal / Niedrige Priorität
+    int getPriority() override { return 3; }
 };
