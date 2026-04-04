@@ -4,7 +4,7 @@
 
 class WeatherRenderer {
 private:
-    uint16_t cYellow, cGold, cOrange, cBlue, cWhite, cLightGray, cDarkGray, cRain, cRed, cGreenLeaf;
+    uint16_t cYellow, cGold, cOrange, cBlue, cWhite, cLightGray, cDarkGray, cRain, cRed, cGreenLeaf, cMoon;
 
     void initColors(DisplayManager& d) {
         cYellow = d.color565(255, 220, 0);
@@ -17,6 +17,7 @@ private:
         cRain = d.color565(80, 150, 255);
         cRed = d.color565(255, 50, 50);
         cGreenLeaf = d.color565(50, 200, 50);
+        cMoon = d.color565(180, 180, 130); // <--- NEU: Grau-Gelb für den Mond
     }
 
     // Hilfsfunktion: Pulsierende RGBA-Farbe erzeugen
@@ -66,7 +67,7 @@ private:
                 if (ix*ix + iy*iy <= r*r) { // Innerhalb Mond
                     int mx = ix - maskXOffset, my = iy - maskYOffset;
                     if (mx*mx + my*my > r*r) { // Außerhalb Maske
-                        d.drawPixel(cx + ix, cy + iy, cBlue);
+                        d.drawPixel(cx + ix, cy + iy, cMoon); // <--- NEU: Grau-Gelb
                     }
                 }
             }
@@ -75,22 +76,24 @@ private:
         // Weicher "Glow"-Rand (1-Pixel-Punkte, halbtransparent simuliert)
         for (int i=0; i<4; i++) {
             float a = i * (PI/2.0f);
-            d.drawPixel(cx + cos(a)*(r+1), cy + sin(a)*(r+1), d.color565(30, 60, 150));
+            d.drawPixel(cx + cos(a)*(r+1), cy + sin(a)*(r+1), d.color565(60, 60, 40)); // Glow passend zum Mond
         }
 
         // 3 weich funkelnde Sterne (mit Fade-In/Out)
         d.drawPixel(x + s*0.8, y + s*0.2, getPulseColor(d, d.color565(30,30,30), cWhite, f, 16));
         d.drawPixel(x + s*0.2, y + s*0.8, getPulseColor(d, d.color565(30,30,30), cWhite, f+4, 16));
-        d.drawPixel(x + s*0.5, y + s*0.1, getPulseColor(d, d.color565(10,10,10), cLightGray, f+8, 16)); // Subtiler 3. Stern
+        d.drawPixel(x + s*0.5, y + s*0.1, getPulseColor(d, d.color565(10,10,10), cLightGray, f+8, 16)); 
     }
 
-    void drawCloud(DisplayManager& d, int x, int y, int s, int f, bool dark = false, float breathingRatio = 1.0f) {
+    // NEU: Der Schalter "nightCloud" macht die dunkle Wolke etwas heller
+    void drawCloud(DisplayManager& d, int x, int y, int s, int f, bool dark = false, float breathingRatio = 1.0f, bool nightCloud = false) {
         // Weiches Atmen: Sinus-Welle (0 bis 2 Pixel bei 24px)
         float breathe = sin(f * (2.0f * PI / 16.0f)) * breathingRatio * (s * 0.05f);
         int cy = (y + s * 0.55) - breathe;
         
-        uint16_t cMain = dark ? d.color565(80,80,80) : cLightGray;
-        uint16_t cShadow = dark ? d.color565(50,50,50) : d.color565(170,170,170); // Mehr Farbabstufungen
+        // Farben dynamisch anpassen
+        uint16_t cMain = dark ? (nightCloud ? d.color565(110,110,110) : d.color565(80,80,80)) : cLightGray;
+        uint16_t cShadow = dark ? (nightCloud ? d.color565(80,80,80) : d.color565(50,50,50)) : d.color565(170,170,170);
         
         int rMid = s * 0.25, rSide = s * 0.15;
         int cxM = x + s * 0.5, cxL = x + s * 0.25, cxR = x + s * 0.75;
@@ -111,11 +114,11 @@ private:
         int startY = y + s * 0.6;
         
         if (type == "rainy") {
-            // Leicht: Weniger, kürzere Tropfen (Punkte), fallen langsamer
+            // Leicht: Weniger Tropfen, aber ein wenig länger (drawLine statt drawPixel)
             for(int i = 0; i < 3; i++) {
                 int dropX = x + s * 0.2 + (i * (s * 0.2));
                 int dropY = startY + ((f + i * 4) % (int)(s * 0.4));
-                d.drawPixel(dropX, dropY, cRain);
+                d.drawLine(dropX, dropY, dropX, dropY + 1, cRain); // <--- Längerer Regenstrich
             }
         } else if (type == "pouring") {
             // Stark: Mehr, längere Linien, fallen schnell und leicht schräg (Wind)
@@ -151,8 +154,6 @@ private:
 
     void drawWindRedesign(DisplayManager& d, int x, int y, int s, int f) {
         // Redesign: Ein fliegendes Pixel-Blatt wirbelt in einer Acht. Abstrakte Windlinien dahinter.
-        
-        // 1. Abstrakte Windlinien
         for(int i=0; i<3; i++) {
             int lineY = y + s*0.2 + (i * s*0.3);
             int startOffset = (f * (2 + i)) % s;
@@ -160,20 +161,19 @@ private:
             d.drawLine(x + startOffset, lineY, x + (startOffset + length) % s, lineY, getPulseColor(d, d.color565(30,30,30), d.color565(150,150,150), f+i*3, 16));
         }
 
-        // 2. Das wirbelnde Pixel-Blatt (Achter-Figur)
         float t = f * (2.0f * PI / 16.0f);
         float leafX = x + s*0.5 + (sin(t) * s*0.35f);
         float leafY = y + s*0.5 + (sin(t*2.0f) * s*0.2f);
-        d.fillCircle(leafX, leafY, 1, getPulseColor(d, cGreenLeaf, d.color565(20, 100, 20), f, 16)); // Atmet farblich
+        d.fillCircle(leafX, leafY, 1, getPulseColor(d, cGreenLeaf, d.color565(20, 100, 20), f, 16)); 
     }
 
     void drawFogRedesign(DisplayManager& d, int x, int y, int s, int f) {
         // Redesign: Wabern. Sanft pulsierende, überlappende Linien, sehr geringer Kontrast.
         for(int i=0; i<4; i++) {
-            int lineY = y + s*0.2 + (i * s*0.2) + (sin((f+i*2) * (2.0f * PI / 16.0f)) * 1.0f); // Wabern (Sub-Pixel)
+            int lineY = y + s*0.2 + (i * s*0.2) + (sin((f+i*2) * (2.0f * PI / 16.0f)) * 1.0f); 
             uint16_t c = getPulseColor(d, d.color565(50,50,50), d.color565(150,150,150), f + i*2, 16);
             d.drawLine(x + s*0.1, lineY, x + s*0.9, lineY, c);
-            if (s > 16) d.drawPixel(x + s*(0.3f+i*0.1f), lineY+1, d.color565(30,30,30)); // Dezent detailreicher
+            if (s > 16) d.drawPixel(x + s*(0.3f+i*0.1f), lineY+1, d.color565(30,30,30)); 
         }
     }
 
@@ -182,7 +182,7 @@ public:
 
     void drawWeatherIcon(DisplayManager& display, int x, int y, int size, String cond, int frame) {
         initColors(display);
-        int f = frame % 16; // NEU: 16 Frames
+        int f = frame % 16; 
 
         if (cond == "sunny" || cond == "clear-day") {
             drawSun(display, x, y, size, f);
@@ -191,13 +191,12 @@ public:
         } else if (cond == "cloudy") {
             drawCloud(display, x, y, size, f, false);
         } else if (cond == "partlycloudy") {
-            // Sonne hinten wackelt leicht, Wolke davor atmet
             drawSun(display, x - size*0.1, y - size*0.1, size*0.8, f + 4); 
             drawCloud(display, x + size*0.1, y + size*0.1, size*0.9, f, false, 0.5f);
         } else if (cond == "partlycloudy-night") {
-            // Mond größer und weiter sichtbar, Wolke davor schmaler und dunkler
+            // NEU: Nacht-Wolke etwas heller (nightCloud = true)
             drawMoon(display, x - size*0.1, y - size*0.1, size*0.9, f); 
-            drawCloud(display, x + size*0.1, y + size*0.2, size*0.8, f, true, 0.4f);
+            drawCloud(display, x + size*0.1, y + size*0.2, size*0.8, f, true, 0.4f, true);
         } else if (cond == "rainy") {
             drawCloud(display, x, y - size*0.1, size, f, false);
             drawPrecipitation(display, x, y, size, f, "rainy");
@@ -212,7 +211,7 @@ public:
             drawLightning(display, x, y, size, f);
         } else if (cond == "lightning-rain") {
             drawCloud(display, x, y - size*0.1, size, f, true);
-            drawPrecipitation(display, x, y, size, f, "pouring"); // Regen stark bei Gewitter
+            drawPrecipitation(display, x, y, size, f, "pouring"); 
             drawLightning(display, x, y, size, f);
         } else if (cond == "windy") {
             drawWindRedesign(display, x, y, size, f);

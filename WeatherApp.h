@@ -87,7 +87,8 @@ public:
 
         // --- Timeout / Fehlen der Daten abfangen ---
         if (!hasData || (millis() - dataTimestamp > dataValidityMs)) {
-            display.drawCenteredString(M_HEIGHT / 2 + 4, "Warte auf Wetterdaten...", display.color565(150, 150, 150));
+            // NEU: Kürzerer und knackigerer Text!
+            display.drawCenteredString(M_HEIGHT / 2 + 4, "No Weather!", display.color565(150, 150, 150));
             return true;
         }
 
