@@ -192,6 +192,8 @@ public:
 
     void drawWindRose(DisplayManager& d, int cx, int cy, int r, int windDir, int currentFrame) {
         initColors(d); 
+        // --- NEU: Asynchroner Start ---
+        currentFrame = (currentFrame + (cx * 37 + cy * 17)) % 16;
         
         d.drawCircle(cx, cy, r, d.color565(60, 60, 60));
         d.drawPixel(cx, cy - r, cLightGray); 
@@ -225,34 +227,30 @@ public:
         d.drawLine(rearRX, rearRY, tx, ty, cWindArrow);
     }
 
-    // --- ANGEPASST: Thermometer (Länger, Blase tiefer, Röhrchen breiter) ---
     void drawThermometer(DisplayManager& d, int x, int y, int s, int f, float temp) {
         initColors(d);
+        // --- NEU: Asynchroner Start ---
+        f = (f + (x * 37 + y * 17)) % 16;
+        
         int cx = x + s / 2;
         int br = s * 0.22f; 
         if (br < 2) br = 2;
         
-        // Blase 1 Pixel tiefer (war -3, jetzt -2), dadurch wird das Röhrchen länger!
         int by = y + s - br - 2; 
-        
-        // Röhrchen 1 Pixel breiter machen
         int tw = (s * 0.3f) + 1;  
         if (tw < 4) tw = 4; 
         
         int tx = cx - tw / 2;
-        int ty = y + 3; // Startpunkt der Röhre bleibt, dadurch wächst sie in die Länge
+        int ty = y + 3; 
         int th = by - ty;
 
-        // 1. Hintergrund / Umrandung malen
-        d.fillCircle(cx, by, br, cLightGray); // Blase unten
-        d.fillRect(tx, ty, tw, th, cLightGray); // Rechteckige Röhre
-        d.drawLine(tx + 1, ty - 1, tx + tw - 2, ty - 1, cLightGray); // Runde Kappe oben!
+        d.fillCircle(cx, by, br, cLightGray); 
+        d.fillRect(tx, ty, tw, th, cLightGray); 
+        d.drawLine(tx + 1, ty - 1, tx + tw - 2, ty - 1, cLightGray); 
         
-        // 2. Innenraum freimachen
         d.fillCircle(cx, by, br - 1, 0x0000);
         d.fillRect(tx + 1, ty, tw - 2, th, 0x0000);
 
-        // 3. Farbe berechnen (Blau -> Cyan -> Gelb -> Rot)
         float t = constrain(temp, 0.0f, 30.0f);
         uint8_t r, g, b;
         if (temp <= 0) { r = 50; g = 50; b = 255; }
@@ -270,14 +268,14 @@ public:
         float fillRatio = (constrain(temp, -10.0f, 30.0f) + 10.0f) / 40.0f;
         int fillH = fillRatio * th;
 
-        // 4. Flüssigkeit einfüllen
         d.fillCircle(cx, by, br - 1, liqC);
         if (fillH > 0) d.fillRect(tx + 1, by - fillH, tw - 2, fillH, liqC);
     }
 
-    // --- Luftfeuchtigkeit (Tropfen) ---
     void drawHumidity(DisplayManager& d, int x, int y, int s, int f, float humidity) {
         initColors(d);
+        // --- NEU: Asynchroner Start ---
+        f = (f + (x * 37 + y * 17)) % 16;
         
         float sizeRatio = 1.0f;
         if (humidity < 50.0f) sizeRatio = 0.5f;
@@ -313,9 +311,11 @@ public:
         d.drawPixel(cx + r/2, cy - r/2, cWhite);
     }
 
-    // --- PM2.5 Feinstaub ---
     void drawPM25(DisplayManager& d, int x, int y, int s, int f, float pm25) {
         initColors(d);
+        // --- NEU: Asynchroner Start ---
+        f = (f + (x * 37 + y * 17)) % 16;
+        
         int count = (pm25 <= 7.0f) ? 4 : (pm25 > 25.0f ? 12 : 8);
         for (int i = 0; i < count; i++) {
             float t = ((f + i * 5) % 16) / 16.0f;
@@ -339,17 +339,19 @@ public:
         }
     }
 
-    // --- VOC Ausdünstung ---
     void drawVOC(DisplayManager& d, int x, int y, int s, int f, int voc) {
         initColors(d);
+        // --- NEU: Asynchroner Start ---
+        f = (f + (x * 37 + y * 17)) % 16;
+        
         uint16_t baseColor;
-        if (voc < 90) baseColor = d.color565(50, 220, 50); // Grünlich (Verbesserung)
-        else if (voc <= 110) baseColor = d.color565(180, 180, 180); // Neutral (Grau)
-        else if (voc < 200) baseColor = d.color565(220, 220, 50); // Gelblich (Verschlechterung)
-        else if (voc < 300) baseColor = d.color565(255, 100, 50); // Rötlich
-        else baseColor = d.color565(220, 50, 255); // Toxisch Lila
+        if (voc < 90) baseColor = d.color565(50, 220, 50);
+        else if (voc <= 110) baseColor = d.color565(180, 180, 180);
+        else if (voc < 200) baseColor = d.color565(220, 220, 50); 
+        else if (voc < 300) baseColor = d.color565(255, 100, 50); 
+        else baseColor = d.color565(220, 50, 255); 
 
-        int lines = (voc > 110) ? ((voc >= 200) ? 4 : 3) : 2; // Mehr Schwaden bei schlechter Luft
+        int lines = (voc > 110) ? ((voc >= 200) ? 4 : 3) : 2; 
         for (int i = 0; i < lines; i++) {
             float startX = x + s * 0.2f + i * (s * 0.8f / lines);
             for (int j = 0; j < s * 0.8f; j++) {
@@ -369,7 +371,8 @@ public:
 
     void drawWeatherIcon(DisplayManager& display, int x, int y, int size, String cond, int frame) {
         initColors(display);
-        int f = frame % 16; 
+        // --- NEU: Asynchroner Start ---
+        int f = (frame + (x * 37 + y * 17)) % 16; 
 
         if (cond == "sunny" || cond == "clear-day") drawSun(display, x, y, size, f);
         else if (cond == "clear-night") drawMoon(display, x, y, size, f);
