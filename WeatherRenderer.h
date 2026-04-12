@@ -5,6 +5,9 @@
 class WeatherRenderer {
 private:
     uint16_t cYellow, cGold, cOrange, cBlue, cWhite, cLightGray, cDarkGray, cRain, cRed, cGreenLeaf, cMoon, cWindArrow;
+    
+    // --- NEU: Globaler Zufalls-Offset für die Animationen ---
+    int animOffset = 0; 
 
     void initColors(DisplayManager& d) {
         cYellow = d.color565(255, 220, 0);
@@ -190,10 +193,15 @@ private:
 public:
     WeatherRenderer() {}
 
+    // --- NEU: Echter Zufall anstoßen ---
+    void shuffleAnimations() {
+        animOffset = random(1000);
+    }
+
     void drawWindRose(DisplayManager& d, int cx, int cy, int r, int windDir, int currentFrame) {
         initColors(d); 
-        // --- NEU: Asynchroner Start ---
-        currentFrame = (currentFrame + (cx * 37 + cy * 17)) % 16;
+        // Position + Echter Zufall kombinieren
+        currentFrame = (currentFrame + (cx * 37 + cy * 17) + animOffset) % 16;
         
         d.drawCircle(cx, cy, r, d.color565(60, 60, 60));
         d.drawPixel(cx, cy - r, cLightGray); 
@@ -229,8 +237,8 @@ public:
 
     void drawThermometer(DisplayManager& d, int x, int y, int s, int f, float temp) {
         initColors(d);
-        // --- NEU: Asynchroner Start ---
-        f = (f + (x * 37 + y * 17)) % 16;
+        // Position + Echter Zufall kombinieren
+        f = (f + (x * 37 + y * 17) + animOffset) % 16;
         
         int cx = x + s / 2;
         int br = s * 0.22f; 
@@ -274,8 +282,8 @@ public:
 
     void drawHumidity(DisplayManager& d, int x, int y, int s, int f, float humidity) {
         initColors(d);
-        // --- NEU: Asynchroner Start ---
-        f = (f + (x * 37 + y * 17)) % 16;
+        // Position + Echter Zufall kombinieren
+        f = (f + (x * 37 + y * 17) + animOffset) % 16;
         
         float sizeRatio = 1.0f;
         if (humidity < 50.0f) sizeRatio = 0.5f;
@@ -313,8 +321,8 @@ public:
 
     void drawPM25(DisplayManager& d, int x, int y, int s, int f, float pm25) {
         initColors(d);
-        // --- NEU: Asynchroner Start ---
-        f = (f + (x * 37 + y * 17)) % 16;
+        // Position + Echter Zufall kombinieren
+        f = (f + (x * 37 + y * 17) + animOffset) % 16;
         
         int count = (pm25 <= 7.0f) ? 4 : (pm25 > 25.0f ? 12 : 8);
         for (int i = 0; i < count; i++) {
@@ -341,8 +349,8 @@ public:
 
     void drawVOC(DisplayManager& d, int x, int y, int s, int f, int voc) {
         initColors(d);
-        // --- NEU: Asynchroner Start ---
-        f = (f + (x * 37 + y * 17)) % 16;
+        // Position + Echter Zufall kombinieren
+        f = (f + (x * 37 + y * 17) + animOffset) % 16;
         
         uint16_t baseColor;
         if (voc < 90) baseColor = d.color565(50, 220, 50);
@@ -371,8 +379,8 @@ public:
 
     void drawWeatherIcon(DisplayManager& display, int x, int y, int size, String cond, int frame) {
         initColors(display);
-        // --- NEU: Asynchroner Start ---
-        int f = (frame + (x * 37 + y * 17)) % 16; 
+        // Position + Echter Zufall kombinieren
+        int f = (frame + (x * 37 + y * 17) + animOffset) % 16; 
 
         if (cond == "sunny" || cond == "clear-day") drawSun(display, x, y, size, f);
         else if (cond == "clear-night") drawMoon(display, x, y, size, f);

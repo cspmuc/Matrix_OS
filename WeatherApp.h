@@ -5,8 +5,6 @@
 #include "WeatherRenderer.h"
 #include "RichText.h" 
 
-// --- FEHLERHAFTE EXTERN ZEILEN WURDEN ENTFERNT ---
-
 struct WeatherData {
     String condition = "unknown";
     float temp = 0.0;     
@@ -67,6 +65,9 @@ public:
         infoPage = 0; 
         lastInfoToggle = millis();
         currentMultiplier = 1.0;
+        
+        // --- NEU: Animationen beim Start mischen ---
+        renderer.shuffleAnimations();
     }
 
     bool isReadyToSwitch(float durationMultiplier = 1.0) override {
@@ -137,6 +138,10 @@ public:
             } else {
                 lastInfoToggle = millis();
                 infoPage++;
+                
+                // --- NEU: Animationen beim Seitenwechsel neu mischen ---
+                renderer.shuffleAnimations();
+                
                 if (infoPage >= 4) {
                     cycleComplete = true; 
                     if (currentApp == AUTO) infoPage = 3; 
