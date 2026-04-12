@@ -14,6 +14,7 @@ private:
     struct tm lastKnownTime;
     bool hasValidTime = false;
     
+    int lastCalculatedHour = -1;
     int lastCalculatedMinute = -1; 
     int lastCalculated_mR = -1;
     bool firstRun = true;
@@ -27,7 +28,13 @@ private:
     const String* activeLines[4];
     int activeLineCount = 0;
 
-    // --- NEU: Matrix Rain Variablen ---
+    // --- NEU: Speicher für den fallenden "alten" Text ---
+    String oldLines[4];
+    int oldLineCount = 0;
+    int oldJitterX = 0;
+    float oldAnimYOffset = 0;
+
+    // --- Matrix Rain Variablen ---
     bool isAnimating = false;
     float animYOffset = 0;
     unsigned long lastAnimFrame = 0;
@@ -40,7 +47,6 @@ private:
     };
     RainDrop drops[20];
 
-    // --- NEU: Farben sind jetzt dynamisch! ---
     void updateClockText(int h, int m, String cHigh, String cDim) {
         String tagBold = "{b}";
         String sUhr = cDim + "Uhr";
@@ -94,7 +100,6 @@ public:
         unsigned long now = millis();
         bool needsRedraw = force;
 
-        // 1. Zeit synchronisieren
         if (now - lastTimeCheck > TIME_CHECK_INTERVAL) {
             lastTimeCheck = now;
             time_t nowTime = time(nullptr);
@@ -107,51 +112,65 @@ public:
         if (!hasValidTime) {
             if (!force && lastCalculatedMinute == -2) return false;
             display.clear();
-            richText.drawCentered(display, 36, "{c:red}NTP not synced", "Small");
+            richText.drawCentered(display, M_HEIGHT / 2 + 4, "{c:red}NTP not synced", "Small");
             lastCalculatedMinute = -2; 
             return true;
         }
 
         int h = lastKnownTime.tm_hour;
         int m = lastKnownTime.tm_min;
-        int mR = (m / 5) * 5; // Der 5-Minuten Block
+        int mR = (m / 5) * 5; 
 
-        // 2. Prüfen, ob sich die "Worte" geändert haben
+        // Die Uhrzeit hat sich in einen neuen Wort-Block geändert!
         if (mR != lastCalculated_mR) {
+            
+            if (!firstRun) {
+                // 1. Den ALTEN Text in grellem Grün generieren und speichern
+                updateClockText(lastCalculatedHour, lastCalculatedMinute, "{c:#88FF88}", "{c:#00AA00}");
+                oldLineCount = activeLineCount;
+                for(int i = 0; i < activeLineCount; i++) {
+                    oldLines[i] = *(activeLines[i]);
+                }
+                oldJitterX = currentJitterX;
+                
+                // 2. Animation starten
+                isAnimating = true;
+                animYOffset = M_HEIGHT + 30.0f; // Neuer Text startet weit oben
+                oldAnimYOffset = 0.0f;          // Alter Text startet in der Mitte
+                
+                // 3. Regentropfen initialisieren (langsamer und über volle Breite!)
+                for(int i=0; i<20; i++) {
+                    drops[i].x = random(M_WIDTH);
+                    drops[i].y = random(M_HEIGHT) - M_HEIGHT; 
+                    drops[i].speed = random(6, 18) / 10.0f; // Deutlich langsamer (0.6 bis 1.8)
+                    drops[i].length = random(5, 15);         
+                }
+            }
+            
+            // 4. Status auf die NEUE Zeit aktualisieren
             lastCalculated_mR = mR;
             lastCalculatedMinute = m; 
+            lastCalculatedHour = h;
             
-            // Zufälligen horizontalen Jitter für diese Uhrzeit berechnen
             srand(h * 60 + mR);
             currentJitterX = (rand() % 5) - 2; 
             
             if (firstRun) {
-                // Beim Systemstart direkt normal anzeigen (Keine Animation)
+                // Beim Neustart einfach statisch anzeigen
                 updateClockText(h, m, "{c:#FFC800}", "{c:#AAAAAA}");
                 firstRun = false;
             } else {
-                // ANIMATION STARTEN!
-                isAnimating = true;
-                animYOffset = 90.0f; // Startet weit oben außerhalb des Bildschirms
-                
-                for(int i=0; i<20; i++) {
-                    drops[i].x = random(64);
-                    drops[i].y = random(64) - 64; 
-                    drops[i].speed = random(15, 35) / 10.0f; // Fallgeschwindigkeit
-                    drops[i].length = random(5, 15);         // Schweif-Länge
-                }
-                // Zeige den Text im grellen Matrix-Grün an!
+                // Den NEUEN Text in grellem Grün für die Animation vorbereiten
                 updateClockText(h, m, "{c:#88FF88}", "{c:#00AA00}"); 
             }
             needsRedraw = true;
         } 
         else if (m != lastCalculatedMinute) {
-            // Nur die Minuten-Punkte haben sich geändert
+            // Nur ein Minutenpunkt (ohne Wortwechsel) ändert sich
             lastCalculatedMinute = m;
             needsRedraw = true;
         }
 
-        // Wenn nichts animiert und nichts geupdatet wurde -> Abbrechen um CPU zu sparen
         if (!needsRedraw && !isAnimating) return false; 
         
         display.clear();
@@ -162,23 +181,40 @@ public:
         if (isAnimating) {
             if (now - lastAnimFrame > 30) {
                 lastAnimFrame = now;
-                animYOffset -= 2.0f; // Text fällt nach unten
                 
-                // Regentropfen fallen lassen
-                for(int i=0; i<20; i++) {
-                    drops[i].y += drops[i].speed;
-                    // Wenn Tropfen unten raus ist und die Text-Animation noch läuft -> oben neu starten
-                    if (drops[i].y > 64 + drops[i].length && animYOffset > -20) {
-                        drops[i].y = random(10) - 20;
-                        drops[i].x = random(64);
+                // A) Der NEUE Text fällt nach unten ein
+                if (animYOffset > -50.0f) {
+                    animYOffset -= 1.5f; 
+                    if (animYOffset <= -50.0f) {
+                        // Klick! Neuer Text ist eingerastet -> Zurück zu Gold/Silber
+                        updateClockText(h, m, "{c:#FFC800}", "{c:#AAAAAA}"); 
                     }
                 }
 
-                // Wenn der Text komplett eingefahren ist und der Regen durchfällt
-                if (animYOffset <= -50.0f) { 
+                // B) Der ALTE Text fällt nach unten aus dem Bild
+                oldAnimYOffset += 1.5f;
+
+                bool dropsRemaining = false;
+                
+                // C) Regentropfen fallen lassen
+                for(int i=0; i<20; i++) {
+                    drops[i].y += drops[i].speed;
+                    
+                    if (drops[i].y > M_HEIGHT + drops[i].length) {
+                        // Oben neu spawnen, solange der Text noch nicht eingerastet ist
+                        if (animYOffset > -50.0f) {
+                            drops[i].y = random(10) - 20;
+                            drops[i].x = random(M_WIDTH);
+                            dropsRemaining = true;
+                        }
+                    } else {
+                        dropsRemaining = true; 
+                    }
+                }
+
+                // Komplett stoppen, wenn alles vorbei ist
+                if (animYOffset <= -50.0f && !dropsRemaining && oldAnimYOffset > M_HEIGHT + 30.0f) { 
                     isAnimating = false;
-                    // Zurück zu Gold und Silber schalten!
-                    updateClockText(h, m, "{c:#FFC800}", "{c:#AAAAAA}"); 
                 }
             }
 
@@ -186,38 +222,66 @@ public:
             for(int i=0; i<20; i++) {
                 int dx = drops[i].x;
                 int dy = (int)drops[i].y;
-                display.drawPixel(dx, dy, display.color565(150, 255, 150)); // Tropfenkopf (hellgrün)
+                display.drawPixel(dx, dy, display.color565(150, 255, 150)); 
                 
-                // Schweif zeichnen und ausfaden lassen
                 for(int l=1; l<drops[i].length; l++) {
                     int tailY = dy - l;
-                    if (tailY >= 0 && tailY < 64) {
+                    if (tailY >= 0 && tailY < M_HEIGHT) {
                         int fade = 255 - (l * 255 / drops[i].length);
-                        display.drawPixel(dx, tailY, display.color565(0, fade/2, 0)); // Dunkelgrüner Schweif
+                        display.drawPixel(dx, tailY, display.color565(0, fade/2, 0)); 
                     }
                 }
             }
-            needsRedraw = true; // Zwingt das System, das nächste Frame direkt zu zeichnen
+            needsRedraw = true; 
         }
 
         // ==========================================
         // 4. ZEIT RENDER (Punkte & Text)
         // ==========================================
         
-        // Minuten Punkte (werden während der Animation passend grün!)
-        uint16_t dotCol = isAnimating ? display.color565(0, 255, 0) : display.color565(255, 200, 0);
+        // Die 4 Minuten-Punkte (Grün während die Buchstaben fliegen)
+        uint16_t dotCol = (isAnimating && animYOffset > -50.0f) ? display.color565(0, 255, 0) : display.color565(255, 200, 0);
         if (m % 5 >= 1) display.drawPixel(0, 0, dotCol);
         if (m % 5 >= 2) display.drawPixel(M_WIDTH - 1, 0, dotCol);
         if (m % 5 >= 3) display.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, dotCol);
         if (m % 5 >= 4) display.drawPixel(0, M_HEIGHT - 1, dotCol);
 
-        // Text Layout berechnen
         int lineHeight = richText.getLineHeight("Small");      
         int baselineOffset = richText.getBaselineOffset("Small"); 
         int spacing = 1; 
+        
+        // --- A) ALTEN TEXT ZEICHNEN (Fällt nach unten raus) ---
+        if (isAnimating) {
+            int oldTotalHeight = (oldLineCount * lineHeight);
+            if (oldLineCount > 1) oldTotalHeight += (oldLineCount - 1) * spacing;
+            int oldTopY = (M_HEIGHT - (oldTotalHeight - (lineHeight - baselineOffset))) / 2;
+            int oldCurrentY = oldTopY + baselineOffset;
+            
+            for (int i = 0; i < oldLineCount; i++) {
+                const String& text = oldLines[i];
+                int w = richText.getTextWidth(display, text, "Small");
+                int x = (M_WIDTH - w) / 2;
+                
+                if (i == 0 && oldLineCount > 1) x -= 20; 
+                else if (i == oldLineCount - 1 && oldLineCount > 1) x += 20; 
+                x += oldJitterX;
+                
+                // Unterste Zeilen fallen zuerst (Delay-Effekt)
+                float delay = (oldLineCount - 1 - i) * 15.0f;
+                float lineOffset = max(0.0f, oldAnimYOffset - delay);
+                int yPos = oldCurrentY + (int)lineOffset;
+
+                // Nur zeichnen, wenn sich die Zeile auf dem Display befindet
+                if (yPos > -10 && yPos < M_HEIGHT + 10) {
+                    richText.drawString(display, x, yPos, text, "Small", display.color565(170, 170, 170));
+                }
+                oldCurrentY += lineHeight + spacing;
+            }
+        }
+
+        // --- B) NEUEN TEXT ZEICHNEN (Fällt von oben rein) ---
         int totalTextHeight = (activeLineCount * lineHeight);
         if (activeLineCount > 1) totalTextHeight += (activeLineCount - 1) * spacing;
-        
         int topY = (M_HEIGHT - (totalTextHeight - (lineHeight - baselineOffset))) / 2;
         int currentY = topY + baselineOffset;
         
@@ -226,21 +290,18 @@ public:
             int w = richText.getTextWidth(display, text, "Small");
             int x = (M_WIDTH - w) / 2;
             
-            // Jitter & Treppen-Design
             if (i == 0 && activeLineCount > 1) x -= 20; 
             else if (i == activeLineCount - 1 && activeLineCount > 1) x += 20; 
             x += currentJitterX;
             
-            // Fall-Animation berechnen (Zeilen fallen leicht versetzt!)
             int yPos = currentY;
             if (isAnimating) {
+                // Oberste Zeilen fallen zuerst von oben rein
                 float lineOffset = max(0.0f, animYOffset - (i * 15.0f));
                 yPos -= (int)lineOffset;
             }
 
-            // Nur zeichnen, wenn sich die Zeile auf dem Display befindet
-            if (yPos > -10 && yPos < 74) {
-                // Die Farbe wird automatisch durch den String (cHigh/cDim) überschrieben
+            if (yPos > -10 && yPos < M_HEIGHT + 10) {
                 richText.drawString(display, x, yPos, text, "Small", display.color565(170, 170, 170));
             }
             currentY += lineHeight + spacing;
