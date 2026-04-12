@@ -22,12 +22,15 @@ Das System nutzt Präfixe, um genau zu steuern, woher ein Icon geladen wird.
 | :--- | :--- | :--- | :--- |
 | {ti:name} | Text Icon | Vektor-Icon aus der installierten Schriftart (Monochrom, skalierbar). | {ti:sun}, {ti:wifi} |
 | {ic:name} | Icon Sheet | Lädt ein Bitmap-Icon aus einem lokalen Sprite-Sheet (z.B. dotto1.bmp), definiert in catalog.json. | {ic:smile}, {ic:ghost} |
-| {ln:ID} | Lametric Number | Lädt ein Icon anhand der ID direkt aus der LaMetric Cloud. Wird beim ersten Aufruf heruntergeladen und lokal gespeichert. | {ln:2356}, {ln:627} |
-| {lt:name} | Lametric Tag | Nutzt einen Alias aus der catalog.json, der auf eine LaMetric ID verweist. | {lt:wetter}, {lt:youtube} |
+| {ln:ID} | Lametric Number | Lädt ein statisches Icon anhand der ID direkt aus der LaMetric Cloud. Wird beim ersten Aufruf heruntergeladen und lokal gespeichert. | {ln:2356}, {ln:627} |
+| {la:ID} | Lametric Animiert | Lädt ein animiertes Icon anhand der ID aus der LaMetric Cloud. Sichert das Sprite-Sheet (.bmp) und die Frame-Zeiten (.dly) lokal. | {la:37364} |
+| {lt:name} | Lametric Tag | Nutzt einen Alias aus der catalog.json, der auf eine statische LaMetric ID verweist. | {lt:wetter}, {lt:youtube} |
+| {an:name} | Animierter Alias | Nutzt einen Alias aus der catalog.json, der auf eine animierte LaMetric ID verweist. | {an:feuer} |
 
 * Legacy Support: Tags ohne Präfix (z.B. {sun}) werden standardmäßig als {ti:sun} (Text Icon) interpretiert.
 * Layout: Nach jedem Icon (egal welcher Typ) wird automatisch 1 Pixel Abstand eingefügt.
 * Skalierung: LaMetric Icons (original 8x8 Pixel) werden automatisch pixel-perfekt auf 16x16 hochskaliert, um zur Schrifthöhe zu passen.
+* Animationen: Werden animierte Tags (`{la:...}` oder `{an:...}`) in Texten verwendet (z.B. in der SensorApp), erkennt das System dies automatisch und wechselt vom statischen in den kontinuierlichen Render-Modus, um die Animationen flüssig abzuspielen.
 * Fehlerbehandlung: Kann ein Online-Icon nicht geladen werden (z.B. ID falsch oder kein WLAN), wird ein rotes "X" gezeichnet und das Icon auf eine Blacklist gesetzt, um das System nicht zu verlangsamen.
 
 ### Textformatierung
@@ -66,7 +69,7 @@ Steuert Netzwerk, MQTT, Systemeinstellungen und den Auto-Modus.
   "auto": {
     "enabled": true,
     "wordclock_duration_sec": 20,
-    "apps": ["wordclock", "sensors", "plasma"]
+    "apps": ["wordclock", "sensors", "weather", "plasma"]
   }
 }
 (Hinweis: Netzwerk, MQTT und Zeit-Einstellungen sind ebenfalls in dieser Datei möglich, siehe ConfigManager-Code).
@@ -104,7 +107,8 @@ Basis Topic: matrix/cmd/...
 * Payload: {"app": "APPNAME"}
 * Verfügbare Apps:
     * wordclock (Wortuhr)
-    * sensors (Dashboard)
+    * weather (Wetter-Dashboard mit aktueller Lage, lokalen Sensoren und 3-Tages-Vorhersage inkl. prozedural gerenderten Elementen)
+    * sensors (Dynamisches Daten-Dashboard)
     * ticker (Lauftext Demo)
     * plasma (Grafik Demo)
     * testpattern (Pixel Test)
@@ -125,7 +129,7 @@ Zeigt eine Nachricht über der aktuellen App an.
 * Topic: matrix/cmd/overlay
 * Payload:
     {
-      "msg": "Hallo {lt:wetter}",
+      "msg": "Hallo {la:37364}",
       "duration": 5,
       "color": "gold",
       "speed": 30,
@@ -142,7 +146,7 @@ Zeigt eine Vollbild-Animation über dem abgedunkelten aktuellen Bild an.
     }
 
 ### Sensor Dashboard & Prioritäten-System
-Sendet Daten an die SensorApp. Das Display rotiert automatisch durch alle empfangenen Seiten.
+Sendet Daten an die SensorApp. Das Display rotiert im Auto-Modus dynamisch durch alle empfangenen Seiten und passt die Anzeigedauer anderer Apps an.
 * Topic: matrix/cmd/sensor_page
 * Payload:
     {
@@ -152,15 +156,15 @@ Sendet Daten an die SensorApp. Das Display rotiert automatisch durch alle empfan
       "priority": 2,
       "items": [
         { "icon": "ti:sun", "text": "22°C", "color": "white" },
-        { "icon": "ln:872", "text": "45%",  "color": "blue" }
+        { "icon": "la:37364", "text": "45%",  "color": "blue" }
       ]
     }
 * Layouts: Das System wählt das Layout automatisch anhand der Anzahl der Items (Einzeln, Liste oder Grid).
 
 Das Prioritäten-System:
-* Prio 3 (Normal): Die Seite wird regulär (z.B. 7 Sek.) angezeigt. Punkt-Indikator: Weiß.
-* Prio 2 (Wichtig): Die Seite wird 50% länger angezeigt. Punkt-Indikator: Gelb. Laufende passive Apps (wie die Uhr) reduzieren ihre Anzeigedauer auf 60%, um schneller Platz zu machen.
-* Prio 1 (Alarm): Die Seite wird 100% länger angezeigt (doppelte Zeit). Punkt-Indikator: Rot. Laufende passive Apps reduzieren ihre Anzeigedauer auf 40%.
+* Prio 3 (Normal): Standard-Priorität für reguläre Apps (wie `weather` oder `wordclock`). Die Sensor-Seite wird regulär (z.B. 8 Sek.) angezeigt. Laufende passive Apps nutzen ihren normalen Zeit-Multiplikator (1.0 / 100%). Punkt-Indikator: Weiß / Dunkelgrau.
+* Prio 2 (Wichtig): Die Sensor-Seite wird 50% länger angezeigt. Laufende passive Apps im Auto-Modus reduzieren ihre Anzeigedauer auf 60% (Multiplikator 0.6), um schneller wieder Platz für die wichtigen Sensordaten zu machen. Punkt-Indikator: Gelb.
+* Prio 1 (Alarm): Die Sensor-Seite wird 100% länger angezeigt (doppelte Zeit). Laufende passive Apps reduzieren ihre Anzeigedauer auf 40% (Multiplikator 0.4). Punkt-Indikator: Rot.
 
 ### Status (Rückkanal)
 Das System sendet Statusänderungen an:
@@ -198,5 +202,5 @@ Das Dateisystem (LittleFS) ist wie folgt aufgebaut:
     * Benennung: [ID].bmp (z.B. 2356.bmp).
     * Format: 32-Bit BMP (inkl. Alpha-Kanal).
 * /iconsan/
-    * Speicher für animierte Icons.
-    * Enthält jeweils eine .bmp (Sprite Sheet) und eine .dly (Timing-Informationen) Datei.
+    * Speicher für heruntergeladene animierte LaMetric Icons.
+    * Enthält jeweils eine .bmp (Sprite Sheet) und eine korrespondierende .dly (Timing-Informationen) Datei.
