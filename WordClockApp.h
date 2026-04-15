@@ -2,9 +2,18 @@
 #include "App.h"
 #include "RichText.h" 
 #include <time.h>
+#include <stdio.h>
 #include "ConfigManager.h"
 
 extern ConfigManager configManager; 
+
+// Die 4 Phasen unserer Animation
+enum AnimState {
+    IDLE,
+    FADE_TO_GREEN,
+    MATRIX_RAIN,
+    FADE_TO_GOLD
+};
 
 class WordClockApp : public App {
 private:
@@ -28,16 +37,22 @@ private:
     const String* activeLines[4];
     int activeLineCount = 0;
 
-    // --- NEU: Speicher für den fallenden "alten" Text ---
+    // Speicher für den fallenden "alten" Text
     String oldLines[4];
     int oldLineCount = 0;
     int oldJitterX = 0;
     float oldAnimYOffset = 0;
 
-    // --- Matrix Rain Variablen ---
-    bool isAnimating = false;
+    // --- State Machine & Animation ---
+    AnimState animState = IDLE;
+    unsigned long animStateStartTime = 0;
     float animYOffset = 0;
     unsigned long lastAnimFrame = 0;
+    
+    // Speicher für die Ziel-Uhrzeit während des Fades
+    int targetHour = -1;
+    int targetMinute = -1;
+    int target_mR = -1;
 
     struct RainDrop {
         float x;
@@ -46,6 +61,17 @@ private:
         int length;
     };
     RainDrop drops[20];
+
+    // Hilfsfunktion: Überblendet zwei RGB Farben weich ineinander und gibt einen Hex-String zurück
+    String getBlendedColor(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2, uint8_t b2, float ratio) {
+        ratio = max(0.0f, min(1.0f, ratio));
+        uint8_t r = r1 + (r2 - r1) * ratio;
+        uint8_t g = g1 + (g2 - g1) * ratio;
+        uint8_t b = b1 + (b2 - b1) * ratio;
+        char hex[10];
+        snprintf(hex, sizeof(hex), "#%02X%02X%02X", r, g, b);
+        return String(hex);
+    }
 
     void updateClockText(int h, int m, String cHigh, String cDim) {
         String tagBold = "{b}";
@@ -121,87 +147,109 @@ public:
         int m = lastKnownTime.tm_min;
         int mR = (m / 5) * 5; 
 
-        // Die Uhrzeit hat sich in einen neuen Wort-Block geändert!
-        if (mR != lastCalculated_mR) {
-            
-            if (!firstRun) {
-                // 1. Den ALTEN Text in grellem Grün generieren und speichern
-                updateClockText(lastCalculatedHour, lastCalculatedMinute, "{c:#88FF88}", "{c:#00AA00}");
-                oldLineCount = activeLineCount;
-                for(int i = 0; i < activeLineCount; i++) {
-                    oldLines[i] = *(activeLines[i]);
-                }
-                oldJitterX = currentJitterX;
-                
-                // 2. Animation starten
-                isAnimating = true;
-                animYOffset = M_HEIGHT + 30.0f; // Neuer Text startet weit oben
-                oldAnimYOffset = 0.0f;          // Alter Text startet in der Mitte
-                
-                // 3. Regentropfen initialisieren (langsamer und über volle Breite!)
-                for(int i=0; i<20; i++) {
-                    drops[i].x = random(M_WIDTH);
-                    drops[i].y = random(M_HEIGHT) - M_HEIGHT; 
-                    drops[i].speed = random(6, 18) / 10.0f; // Deutlich langsamer (0.6 bis 1.8)
-                    drops[i].length = random(5, 15);         
-                }
-            }
-            
-            // 4. Status auf die NEUE Zeit aktualisieren
-            lastCalculated_mR = mR;
-            lastCalculatedMinute = m; 
-            lastCalculatedHour = h;
-            
-            srand(h * 60 + mR);
-            currentJitterX = (rand() % 5) - 2; 
-            
+        // Trigger: Die Uhrzeit ändert sich in einen neuen Wort-Block
+        if (mR != lastCalculated_mR && animState == IDLE) {
             if (firstRun) {
-                // Beim Neustart einfach statisch anzeigen
+                // Direkter Start beim Einschalten
                 updateClockText(h, m, "{c:#FFC800}", "{c:#AAAAAA}");
+                lastCalculatedHour = h;
+                lastCalculatedMinute = m;
+                lastCalculated_mR = mR;
+                srand(h * 60 + mR);
+                currentJitterX = (rand() % 5) - 2; 
                 firstRun = false;
             } else {
-                // Den NEUEN Text in grellem Grün für die Animation vorbereiten
-                updateClockText(h, m, "{c:#88FF88}", "{c:#00AA00}"); 
+                // Starte Phase 1: Fade to Green
+                animState = FADE_TO_GREEN;
+                animStateStartTime = now;
+                // Merken, auf welche Zeit wir danach umstellen
+                targetHour = h;
+                targetMinute = m;
+                target_mR = mR;
             }
             needsRedraw = true;
         } 
-        else if (m != lastCalculatedMinute) {
-            // Nur ein Minutenpunkt (ohne Wortwechsel) ändert sich
+        else if (m != lastCalculatedMinute && animState == IDLE) {
+            // Normale Minutenpunkte ohne Textwechsel
             lastCalculatedMinute = m;
             needsRedraw = true;
         }
 
-        if (!needsRedraw && !isAnimating) return false; 
+        if (!needsRedraw && animState == IDLE) return false; 
         
         display.clear();
 
         // ==========================================
-        // 3. MATRIX RAIN ANIMATION (läuft bei ~30 FPS)
+        // ANIMATION STATE MACHINE
         // ==========================================
-        if (isAnimating) {
+        uint16_t currentDotCol = display.color565(255, 200, 0); // Standard Gold
+
+        if (animState == FADE_TO_GREEN) {
+            float ratio = (now - animStateStartTime) / 1000.0f; // 1 Sekunde Fade
+            
+            if (ratio >= 1.0f) {
+                // FADE BEENDET -> Starte Phase 2: Matrix Rain
+                animState = MATRIX_RAIN;
+                
+                // 1. Alten Text sichern (der ist jetzt komplett grün)
+                updateClockText(lastCalculatedHour, lastCalculatedMinute, "{c:#88FF88}", "{c:#00AA00}");
+                oldLineCount = activeLineCount;
+                for(int i = 0; i < activeLineCount; i++) oldLines[i] = *(activeLines[i]);
+                oldJitterX = currentJitterX;
+                
+                // 2. Zeit aktualisieren auf das neue Ziel
+                lastCalculatedHour = targetHour;
+                lastCalculatedMinute = targetMinute;
+                lastCalculated_mR = target_mR;
+                
+                srand(targetHour * 60 + target_mR);
+                currentJitterX = (rand() % 5) - 2; 
+                
+                // 3. Regen und Koordinaten initialisieren
+                animYOffset = M_HEIGHT + 30.0f; 
+                oldAnimYOffset = 0.0f;          
+                for(int i=0; i<20; i++) {
+                    drops[i].x = random(M_WIDTH);
+                    drops[i].y = random(M_HEIGHT) - M_HEIGHT; 
+                    drops[i].speed = random(6, 18) / 10.0f; 
+                    drops[i].length = random(5, 15);         
+                }
+                
+                // 4. Neuen Text (grün) für den Fall berechnen
+                updateClockText(lastCalculatedHour, lastCalculatedMinute, "{c:#88FF88}", "{c:#00AA00}"); 
+            } else {
+                // WÄHREND DES FADES: Berechne Zwischenfarben
+                String cHigh = getBlendedColor(255, 200, 0, 136, 255, 136, ratio); // Gold -> Hellgrün
+                String cDim  = getBlendedColor(170, 170, 170, 0, 170, 0, ratio);   // Silber -> Dunkelgrün
+                updateClockText(lastCalculatedHour, lastCalculatedMinute, "{c:" + cHigh + "}", "{c:" + cDim + "}");
+                
+                // Eck-Punkte faden ebenfalls
+                uint8_t r = 255 + (0 - 255) * ratio;
+                uint8_t g = 200 + (255 - 200) * ratio;
+                currentDotCol = display.color565(r, g, 0);
+            }
+            needsRedraw = true;
+        }
+        else if (animState == MATRIX_RAIN) {
+            currentDotCol = display.color565(0, 255, 0);
+
             if (now - lastAnimFrame > 30) {
                 lastAnimFrame = now;
                 
-                // A) Der NEUE Text fällt nach unten ein
+                // Neuer Text fällt ein
                 if (animYOffset > -50.0f) {
                     animYOffset -= 1.5f; 
-                    if (animYOffset <= -50.0f) {
-                        // Klick! Neuer Text ist eingerastet -> Zurück zu Gold/Silber
-                        updateClockText(h, m, "{c:#FFC800}", "{c:#AAAAAA}"); 
-                    }
+                    if (animYOffset < -50.0f) animYOffset = -50.0f; // Einrasten
                 }
 
-                // B) Der ALTE Text fällt nach unten aus dem Bild
+                // Alter Text fällt raus
                 oldAnimYOffset += 1.5f;
 
                 bool dropsRemaining = false;
-                
-                // C) Regentropfen fallen lassen
                 for(int i=0; i<20; i++) {
                     drops[i].y += drops[i].speed;
                     
                     if (drops[i].y > M_HEIGHT + drops[i].length) {
-                        // Oben neu spawnen, solange der Text noch nicht eingerastet ist
                         if (animYOffset > -50.0f) {
                             drops[i].y = random(10) - 20;
                             drops[i].x = random(M_WIDTH);
@@ -212,13 +260,14 @@ public:
                     }
                 }
 
-                // Komplett stoppen, wenn alles vorbei ist
+                // Wenn Text eingerastet ist und der Regen vorbei ist -> Phase 3: Fade to Gold
                 if (animYOffset <= -50.0f && !dropsRemaining && oldAnimYOffset > M_HEIGHT + 30.0f) { 
-                    isAnimating = false;
+                    animState = FADE_TO_GOLD;
+                    animStateStartTime = now;
                 }
             }
 
-            // Regentropfen zeichnen
+            // Tropfen zeichnen
             for(int i=0; i<20; i++) {
                 int dx = drops[i].x;
                 int dy = (int)drops[i].y;
@@ -234,24 +283,44 @@ public:
             }
             needsRedraw = true; 
         }
+        else if (animState == FADE_TO_GOLD) {
+            float ratio = (now - animStateStartTime) / 1000.0f; // 1 Sekunde Fade
+            
+            if (ratio >= 1.0f) {
+                // FADE BEENDET -> Phase 4: Zurück zu IDLE
+                animState = IDLE;
+                updateClockText(lastCalculatedHour, lastCalculatedMinute, "{c:#FFC800}", "{c:#AAAAAA}");
+                currentDotCol = display.color565(255, 200, 0);
+            } else {
+                // WÄHREND DES FADES: Farben zurückrechnen
+                String cHigh = getBlendedColor(136, 255, 136, 255, 200, 0, ratio); // Hellgrün -> Gold
+                String cDim  = getBlendedColor(0, 170, 0, 170, 170, 170, ratio);   // Dunkelgrün -> Silber
+                updateClockText(lastCalculatedHour, lastCalculatedMinute, "{c:" + cHigh + "}", "{c:" + cDim + "}");
+                
+                // Eck-Punkte faden zurück
+                uint8_t r = 0 + (255 - 0) * ratio;
+                uint8_t g = 255 + (200 - 255) * ratio;
+                currentDotCol = display.color565(r, g, 0);
+            }
+            needsRedraw = true;
+        }
 
         // ==========================================
-        // 4. ZEIT RENDER (Punkte & Text)
+        // ZEIT RENDER (Punkte & Text)
         // ==========================================
         
-        // Die 4 Minuten-Punkte (Grün während die Buchstaben fliegen)
-        uint16_t dotCol = (isAnimating && animYOffset > -50.0f) ? display.color565(0, 255, 0) : display.color565(255, 200, 0);
-        if (m % 5 >= 1) display.drawPixel(0, 0, dotCol);
-        if (m % 5 >= 2) display.drawPixel(M_WIDTH - 1, 0, dotCol);
-        if (m % 5 >= 3) display.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, dotCol);
-        if (m % 5 >= 4) display.drawPixel(0, M_HEIGHT - 1, dotCol);
+        int displayMinute = lastCalculatedMinute;
+        if (displayMinute % 5 >= 1) display.drawPixel(0, 0, currentDotCol);
+        if (displayMinute % 5 >= 2) display.drawPixel(M_WIDTH - 1, 0, currentDotCol);
+        if (displayMinute % 5 >= 3) display.drawPixel(M_WIDTH - 1, M_HEIGHT - 1, currentDotCol);
+        if (displayMinute % 5 >= 4) display.drawPixel(0, M_HEIGHT - 1, currentDotCol);
 
         int lineHeight = richText.getLineHeight("Small");      
         int baselineOffset = richText.getBaselineOffset("Small"); 
         int spacing = 1; 
         
         // --- A) ALTEN TEXT ZEICHNEN (Fällt nach unten raus) ---
-        if (isAnimating) {
+        if (animState == MATRIX_RAIN) {
             int oldTotalHeight = (oldLineCount * lineHeight);
             if (oldLineCount > 1) oldTotalHeight += (oldLineCount - 1) * spacing;
             int oldTopY = (M_HEIGHT - (oldTotalHeight - (lineHeight - baselineOffset))) / 2;
@@ -266,12 +335,10 @@ public:
                 else if (i == oldLineCount - 1 && oldLineCount > 1) x += 20; 
                 x += oldJitterX;
                 
-                // Unterste Zeilen fallen zuerst (Delay-Effekt)
                 float delay = (oldLineCount - 1 - i) * 15.0f;
                 float lineOffset = max(0.0f, oldAnimYOffset - delay);
                 int yPos = oldCurrentY + (int)lineOffset;
 
-                // Nur zeichnen, wenn sich die Zeile auf dem Display befindet
                 if (yPos > -10 && yPos < M_HEIGHT + 10) {
                     richText.drawString(display, x, yPos, text, "Small", display.color565(170, 170, 170));
                 }
@@ -279,7 +346,7 @@ public:
             }
         }
 
-        // --- B) NEUEN TEXT ZEICHNEN (Fällt von oben rein) ---
+        // --- B) NEUEN/AKTUELLEN TEXT ZEICHNEN ---
         int totalTextHeight = (activeLineCount * lineHeight);
         if (activeLineCount > 1) totalTextHeight += (activeLineCount - 1) * spacing;
         int topY = (M_HEIGHT - (totalTextHeight - (lineHeight - baselineOffset))) / 2;
@@ -295,8 +362,7 @@ public:
             x += currentJitterX;
             
             int yPos = currentY;
-            if (isAnimating) {
-                // Oberste Zeilen fallen zuerst von oben rein
+            if (animState == MATRIX_RAIN) {
                 float lineOffset = max(0.0f, animYOffset - (i * 15.0f));
                 yPos -= (int)lineOffset;
             }
