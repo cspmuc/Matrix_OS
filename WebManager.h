@@ -7,6 +7,93 @@
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern DisplayManager display; 
 
+// --- PONG HTML ZU 100% IM FLASH SPEICHER (0 Bytes RAM) ---
+const char PONG_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Matrix Pong</title>
+  <style>
+    body { background: #111; color: #eee; font-family: Arial, sans-serif; text-align: center; margin: 0; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+    .btn { display: block; background: #333; border: 2px solid #555; color: white; font-size: 24px; font-weight: bold; border-radius: 15px; width: 90%; margin: 10px auto; touch-action: none; }
+    .btn:active { background: #555; }
+    #setup { padding-top: 5vh; }
+    #game-single { display: none; height: 100vh; flex-direction: column; justify-content: center; align-items: center; }
+    #game-split { display: none; height: 100vh; flex-direction: row; justify-content: space-between; align-items: stretch; padding: 10px; box-sizing: border-box; }
+    .split-side { width: 40%; display: flex; flex-direction: column; justify-content: space-between; }
+    .split-center { width: 15%; display: flex; flex-direction: column; justify-content: center; }
+    .btn-join-p1 { height: 15vh; border-color: cyan; color: cyan; }
+    .btn-join-p2 { height: 15vh; border-color: magenta; color: magenta; }
+    .btn-join-split { height: 15vh; border-color: gold; color: gold; margin-top: 30px; }
+    .btn-start { height: 12vh; background: #006600; border-color: #00ff00; width: 100%; }
+    .btn-move { height: 35vh; }
+    .btn-move-split { height: 45vh; width: 100%; font-size: 30px; margin: 0; }
+  </style>
+  <script>
+    let player = 0;
+    function send(cmd, p) { fetch('/pong_ctrl?cmd=' + cmd + '&p=' + p).catch(e => console.log(e)); }
+    function joinSingle(p) {
+      player = p; send('join', p);
+      document.getElementById('setup').style.display = 'none';
+      document.getElementById('game-single').style.display = 'flex';
+      let col = (p == 1) ? 'cyan' : 'magenta';
+      document.getElementById('btn-up').style.borderColor = col;
+      document.getElementById('btn-down').style.borderColor = col;
+    }
+    function joinSplit() {
+      send('join', 1); setTimeout(function() { send('join', 2); }, 150);
+      document.getElementById('setup').style.display = 'none';
+      document.getElementById('game-split').style.display = 'flex';
+    }
+    function setupBtn(id, cmdDown, cmdUp, targetPlayer) {
+        let btn = document.getElementById(id);
+        if(!btn) return;
+        btn.addEventListener('touchstart', function(e) { e.preventDefault(); send(cmdDown, targetPlayer()); });
+        btn.addEventListener('touchend', function(e) { e.preventDefault(); send(cmdUp, targetPlayer()); });
+        btn.addEventListener('mousedown', function(e) { e.preventDefault(); send(cmdDown, targetPlayer()); });
+        btn.addEventListener('mouseup', function(e) { e.preventDefault(); send(cmdUp, targetPlayer()); });
+    }
+    window.onload = function() {
+        setupBtn('btn-up', 'up', 'stop', () => player);
+        setupBtn('btn-down', 'down', 'stop', () => player);
+        setupBtn('btn-split-up-p1', 'up', 'stop', () => 1);
+        setupBtn('btn-split-down-p1', 'down', 'stop', () => 1);
+        setupBtn('btn-split-up-p2', 'up', 'stop', () => 2);
+        setupBtn('btn-split-down-p2', 'down', 'stop', () => 2);
+    };
+  </script>
+</head>
+<body>
+  <div id="setup">
+    <h2>Matrix Pong</h2>
+    <button class="btn btn-join-p1" onclick="joinSingle(1)">Join als P1 (CYAN)</button>
+    <button class="btn btn-join-p2" onclick="joinSingle(2)">Join als P2 (MAGENTA)</button>
+    <button class="btn btn-join-split" onclick="joinSplit()">&#128241; JOIN MULTITOUCH<br><small>(Handy quer drehen)</small></button>
+  </div>
+  <div id="game-single">
+    <button class="btn btn-start" onclick="send('start', player)">START GAME</button>
+    <button id="btn-up" class="btn btn-move">&#9650; UP &#9650;</button>
+    <button id="btn-down" class="btn btn-move">&#9660; DOWN &#9660;</button>
+  </div>
+  <div id="game-split">
+    <div class="split-side">
+        <button id="btn-split-up-p1" class="btn btn-move-split" style="border-color:cyan; color:cyan;">&#9650;</button>
+        <button id="btn-split-down-p1" class="btn btn-move-split" style="border-color:cyan; color:cyan;">&#9660;</button>
+    </div>
+    <div class="split-center">
+        <button class="btn btn-start" onclick="send('start', 1)" style="height: 100vh; writing-mode: vertical-rl; transform: rotate(180deg);">START GAME</button>
+    </div>
+    <div class="split-side">
+        <button id="btn-split-up-p2" class="btn btn-move-split" style="border-color:magenta; color:magenta;">&#9650;</button>
+        <button id="btn-split-down-p2" class="btn btn-move-split" style="border-color:magenta; color:magenta;">&#9660;</button>
+    </div>
+  </div>
+</body>
+</html>
+)rawliteral";
+
 class WebManager {
 private:
     WebServer server;
@@ -64,7 +151,7 @@ public:
     WebManager() : server(80) {}
 
     void begin() {
-        // --- 1. HAUPTSEITE (Datei-Browser) ---
+        // --- 1. HAUPTSEITE (Speicheroptimiert - Kein "String chunk" mehr!) ---
         server.on("/", HTTP_GET, [this]() {
             String path = "/";
             if (server.hasArg("dir")) path = server.arg("dir");
@@ -74,35 +161,28 @@ public:
             server.setContentLength(CONTENT_LENGTH_UNKNOWN);
             server.send(200, "text/html", ""); 
             
-            String chunk = "<html><head><meta charset='utf-8'><title>Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>";
-            chunk += "<h1>Storage: " + path + "</h1>";
+            // Direktes Streaming an den Browser ohne RAM zu blockieren
+            server.sendContent("<html><head><meta charset='utf-8'><title>Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>");
+            server.sendContent("<h1>Storage: " + path + "</h1>");
             
             size_t total = LittleFS.totalBytes();
             size_t used = LittleFS.usedBytes();
-            chunk += "<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>";
+            server.sendContent("<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>");
             
-            chunk += "<div style='display: flex; gap: 10px; margin-bottom: 20px;'>";
-            chunk += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles löschen?\")'>";
-            chunk += "<input type='submit' value='Formatieren (Alles löschen)' style='color:red; padding: 5px 10px;'></form>";
-            
-            chunk += "<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten?\")'>";
-            chunk += "<input type='submit' value='Reboot ESP32' style='color:darkorange; padding: 5px 10px; font-weight: bold;'></form>";
-            chunk += "</div>";
-            
-            chunk += "<hr><form method='POST' action='/upload?dir=" + path + "' enctype='multipart/form-data'>";
-            chunk += "<input type='file' name='upload'><input type='submit' value='Upload' style='padding: 5px 10px;'>";
-            chunk += "</form><hr>";
+            server.sendContent("<div style='display: flex; gap: 10px; margin-bottom: 20px;'>");
+            server.sendContent("<form method='POST' action='/format' onsubmit='return confirm(\"Alles löschen?\")'><input type='submit' value='Formatieren (Alles löschen)' style='color:red; padding: 5px 10px;'></form>");
+            server.sendContent("<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten?\")'><input type='submit' value='Reboot ESP32' style='color:darkorange; padding: 5px 10px; font-weight: bold;'></form>");
+            server.sendContent("</div><hr><form method='POST' action='/upload?dir=" + path + "' enctype='multipart/form-data'><input type='file' name='upload'><input type='submit' value='Upload' style='padding: 5px 10px;'></form><hr>");
 
             if (path != "/") {
                 String parent = path.substring(0, path.length() - 1);
                 int lastSlash = parent.lastIndexOf('/');
                 if (lastSlash >= 0) parent = parent.substring(0, lastSlash + 1);
                 else parent = "/";
-                chunk += "<p><a href='/?dir=" + parent + "'>.. (Zurück)</a></p>";
+                server.sendContent("<p><a href='/?dir=" + parent + "'>.. (Zurück)</a></p>");
             }
 
-            chunk += "<table border='1' cellpadding='5' style='border-collapse: collapse; text-align: left;'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
-            server.sendContent(chunk);
+            server.sendContent("<table border='1' cellpadding='5' style='border-collapse: collapse; text-align: left;'><tr><th>Name</th><th>Size</th><th>Action</th></tr>");
 
             File root = LittleFS.open(path);
             if (root && root.isDirectory()) {
@@ -116,17 +196,14 @@ public:
                     if(path == "/") fullPath = "/" + fileName;
 
                     if(file.isDirectory()) {
-                        String line = "<tr><td><b><a href='/?dir=" + fullPath + "'>[" + fileName + "]</a></b></td>";
-                        line += "<td>DIR</td>";
-                        line += "<td>-</td></tr>";
+                        String line = "<tr><td><b><a href='/?dir=" + fullPath + "'>[" + fileName + "]</a></b></td><td>DIR</td><td>-</td></tr>";
                         server.sendContent(line);
                     } else {
-                        String line = "<tr><td><a href='" + fullPath + "'>" + fileName + "</a></td>";
-                        line += "<td>" + String(file.size()) + " B</td>";
-                        line += "<td><a href='/editor?file=" + fullPath + "'>Edit</a> | <a href='/delete?name=" + fullPath + "' style='color:red;'>Delete</a></td></tr>";
+                        String line = "<tr><td><a href='" + fullPath + "'>" + fileName + "</a></td><td>" + String(file.size()) + " B</td><td><a href='/editor?file=" + fullPath + "'>Edit</a> | <a href='/delete?name=" + fullPath + "' style='color:red;'>Delete</a></td></tr>";
                         server.sendContent(line); 
                     }
                     file = root.openNextFile();
+                    yield(); // <--- Verhindert Blockieren des WLAN-Tasks!
                 }
             }
             server.sendContent("</table></body></html>");
@@ -171,7 +248,7 @@ public:
             html += "</body></html>";
             
             server.send(200, "text/html", html);
-            });
+        });
 
         // --- 3. EDIT (Speichern) ---
         server.on("/edit", HTTP_POST, [this]() {
@@ -313,117 +390,8 @@ public:
 
         // --- 7. PONG WEB-CONTROLLER (HTML) ---
         server.on("/pong", HTTP_GET, [this]() {
-            const char* html = R"rawliteral(
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-              <title>Matrix Pong</title>
-              <style>
-                body { background: #111; color: #eee; font-family: Arial, sans-serif; text-align: center; margin: 0; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
-                .btn { display: block; background: #333; border: 2px solid #555; color: white; font-size: 24px; font-weight: bold; border-radius: 15px; width: 90%; margin: 10px auto; touch-action: none; }
-                .btn:active { background: #555; }
-                
-                /* Layout 1: Einzelnes Handy (Normal) */
-                #setup { padding-top: 5vh; }
-                #game-single { display: none; height: 100vh; flex-direction: column; justify-content: center; align-items: center; }
-                
-                /* Layout 2: Split Screen (Querformat) */
-                #game-split { display: none; height: 100vh; flex-direction: row; justify-content: space-between; align-items: stretch; padding: 10px; box-sizing: border-box; }
-                .split-side { width: 40%; display: flex; flex-direction: column; justify-content: space-between; }
-                .split-center { width: 15%; display: flex; flex-direction: column; justify-content: center; }
-                
-                /* Button Stylings */
-                .btn-join-p1 { height: 15vh; border-color: cyan; color: cyan; }
-                .btn-join-p2 { height: 15vh; border-color: magenta; color: magenta; }
-                .btn-join-split { height: 15vh; border-color: gold; color: gold; margin-top: 30px; }
-                
-                .btn-start { height: 12vh; background: #006600; border-color: #00ff00; width: 100%; }
-                .btn-move { height: 35vh; }
-                .btn-move-split { height: 45vh; width: 100%; font-size: 30px; margin: 0; }
-              </style>
-              <script>
-                let player = 0;
-                
-                // Wir senden Player-ID als Parameter mit, damit 1 Browser P1 & P2 senden kann
-                function send(cmd, p) { 
-                    fetch('/pong_ctrl?cmd=' + cmd + '&p=' + p).catch(e => console.log(e)); 
-                }
-                
-                function joinSingle(p) {
-                  player = p;
-                  send('join', p);
-                  document.getElementById('setup').style.display = 'none';
-                  document.getElementById('game-single').style.display = 'flex';
-                  let col = (p == 1) ? 'cyan' : 'magenta';
-                  document.getElementById('btn-up').style.borderColor = col;
-                  document.getElementById('btn-down').style.borderColor = col;
-                }
-                
-                function joinSplit() {
-                  // Verzögerung für den zweiten Fetch, damit der ESP Webserver nicht verschluckt
-                  send('join', 1);
-                  setTimeout(function() { send('join', 2); }, 150);
-                  
-                  document.getElementById('setup').style.display = 'none';
-                  document.getElementById('game-split').style.display = 'flex';
-                }
-                
-                function setupBtn(id, cmdDown, cmdUp, targetPlayer) {
-                    let btn = document.getElementById(id);
-                    if(!btn) return;
-                    btn.addEventListener('touchstart', function(e) { e.preventDefault(); send(cmdDown, targetPlayer()); });
-                    btn.addEventListener('touchend', function(e) { e.preventDefault(); send(cmdUp, targetPlayer()); });
-                    btn.addEventListener('mousedown', function(e) { e.preventDefault(); send(cmdDown, targetPlayer()); });
-                    btn.addEventListener('mouseup', function(e) { e.preventDefault(); send(cmdUp, targetPlayer()); });
-                }
-                
-                window.onload = function() {
-                    // Setup für Single-Screen
-                    setupBtn('btn-up', 'up', 'stop', () => player);
-                    setupBtn('btn-down', 'down', 'stop', () => player);
-                    
-                    // Setup für Split-Screen (Feste IDs)
-                    setupBtn('btn-split-up-p1', 'up', 'stop', () => 1);
-                    setupBtn('btn-split-down-p1', 'down', 'stop', () => 1);
-                    setupBtn('btn-split-up-p2', 'up', 'stop', () => 2);
-                    setupBtn('btn-split-down-p2', 'down', 'stop', () => 2);
-                };
-              </script>
-            </head>
-            <body>
-              <div id="setup">
-                <h2>Matrix Pong</h2>
-                <button class="btn btn-join-p1" onclick="joinSingle(1)">Join als P1 (CYAN)</button>
-                <button class="btn btn-join-p2" onclick="joinSingle(2)">Join als P2 (MAGENTA)</button>
-                <button class="btn btn-join-split" onclick="joinSplit()">&#128241; JOIN MULTITOUCH<br><small>(Handy quer drehen)</small></button>
-              </div>
-              
-              <div id="game-single">
-                <button class="btn btn-start" onclick="send('start', player)">START GAME</button>
-                <button id="btn-up" class="btn btn-move">&#9650; UP &#9650;</button>
-                <button id="btn-down" class="btn btn-move">&#9660; DOWN &#9660;</button>
-              </div>
-              
-              <div id="game-split">
-                <div class="split-side">
-                    <button id="btn-split-up-p1" class="btn btn-move-split" style="border-color:cyan; color:cyan;">&#9650;</button>
-                    <button id="btn-split-down-p1" class="btn btn-move-split" style="border-color:cyan; color:cyan;">&#9660;</button>
-                </div>
-                <div class="split-center">
-                    <button class="btn btn-start" onclick="send('start', 1)" style="height: 100vh; writing-mode: vertical-rl; transform: rotate(180deg);">START GAME</button>
-                </div>
-                <div class="split-side">
-                    <button id="btn-split-up-p2" class="btn btn-move-split" style="border-color:magenta; color:magenta;">&#9650;</button>
-                    <button id="btn-split-down-p2" class="btn btn-move-split" style="border-color:magenta; color:magenta;">&#9660;</button>
-                </div>
-              </div>
-            </body>
-            </html>
-            )rawliteral";
-            
-            server.send(200, "text/html", html);
+            // Sendet die HTML-Seite direkt aus dem sicheren PROGMEM-Speicher
+            server.send_P(200, "text/html", PONG_HTML);
         });
 
         // --- 8. PONG WEB-CONTROLLER (Datenempfang) ---
