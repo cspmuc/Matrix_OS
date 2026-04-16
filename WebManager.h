@@ -170,7 +170,7 @@ public:
             html += "<br><br><a href='/?dir=/'>&larr; Zurück zum Datei-Browser</a>";
             html += "</body></html>";
             
-            server.send_P(200, "text/html", html);
+            server.send(200, "text/html", html);
             });
 
         // --- 3. EDIT (Speichern) ---
@@ -423,7 +423,7 @@ public:
             </html>
             )rawliteral";
             
-            server.send(200, "text/html", html);
+            server.send_P(200, "text/html", html);
         });
 
         // --- 8. PONG WEB-CONTROLLER (Datenempfang) ---
