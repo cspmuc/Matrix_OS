@@ -74,7 +74,6 @@ public:
             server.setContentLength(CONTENT_LENGTH_UNKNOWN);
             server.send(200, "text/html", ""); 
             
-            // UTF-8 Meta Tag eingefügt
             String chunk = "<html><head><meta charset='utf-8'><title>Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>";
             chunk += "<h1>Storage: " + path + "</h1>";
             
@@ -82,7 +81,6 @@ public:
             size_t used = LittleFS.usedBytes();
             chunk += "<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>";
             
-            // Format & Reboot Buttons (mit korrigierten Umlauten)
             chunk += "<div style='display: flex; gap: 10px; margin-bottom: 20px;'>";
             chunk += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles löschen?\")'>";
             chunk += "<input type='submit' value='Formatieren (Alles löschen)' style='color:red; padding: 5px 10px;'></form>";
@@ -135,7 +133,7 @@ public:
             server.sendContent(""); 
         });
 
-        // --- 2. EDITOR (Anzeigen) ---
+        // --- 2. EDITOR ---
         server.on("/editor", HTTP_GET, [this]() {
             if (!server.hasArg("file")) {
                 server.send(400, "text/plain", "Fehler: Keine Datei angegeben.");
@@ -151,7 +149,6 @@ public:
             String content = f.readString();
             f.close();
 
-            // UTF-8 Meta Tag eingefügt
             String html = "<html><head><meta charset='utf-8'><title>Editor - Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>";
             html += "<h2>Editing: " + filename + "</h2>";
             
@@ -166,7 +163,6 @@ public:
             html += "<input type='submit' value='&#128190; Speichern' style='padding: 10px 20px; font-size: 16px; cursor: pointer;'>";
             html += "</form>";
 
-            // "Änderungen" mit echtem "Ä"
             html += "<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten um Änderungen zu übernehmen?\")'>";
             html += "<input type='submit' value='&#8635; Reboot ESP32' style='padding: 10px 20px; font-size: 16px; color: darkorange; cursor: pointer;'></form>";
             html += "</div>";
@@ -174,8 +170,8 @@ public:
             html += "<br><br><a href='/?dir=/'>&larr; Zurück zum Datei-Browser</a>";
             html += "</body></html>";
             
-            server.send(200, "text/html", html);
-        });
+            server.send_P(200, "text/html", html);
+            });
 
         // --- 3. EDIT (Speichern) ---
         server.on("/edit", HTTP_POST, [this]() {
@@ -202,7 +198,6 @@ public:
 
         // --- 4. REBOOT ---
         server.on("/reboot", HTTP_POST, [this]() {
-            // UTF-8 Meta Tag eingefügt
             String html = "<html><head><meta charset='utf-8'><meta http-equiv='refresh' content='7; url=/'></head>";
             html += "<body style='font-family: Arial, sans-serif; text-align: center; margin-top: 50px;'>";
             html += "<h2>System startet neu...</h2>";
@@ -210,11 +205,11 @@ public:
             html += "</body></html>";
             
             server.send(200, "text/html", html);
-            
             delay(1000); 
             ESP.restart();
         });
 
+        // --- 5. FORMAT ---
         server.on("/format", HTTP_POST, [this]() {
             display.clear();
             display.setTextColor(display.color565(255, 0, 0));
@@ -222,18 +217,16 @@ public:
             display.show();
             delay(100); 
             LittleFS.format();
-            // UTF-8 Meta Tag und "Zurück"
             server.send(200, "text/html", "<html><head><meta charset='utf-8'></head><body>Formatiert! <a href='/'>Zurück</a></body></html>");
             forceOverlay("Format OK", 3, "success");
         });
 
-        // --- UPLOAD ---
+        // --- 6. UPLOAD & DELETE ---
         server.on("/upload", HTTP_POST, [this]() {
             if (uploadError) server.send(507, "text/plain", "Error: Write Failed");
             else {
                 String targetDir = "/";
                 if(server.hasArg("dir")) targetDir = server.arg("dir");
-                // HTML und "Zurück" aufgewertet
                 server.send(200, "text/html", "<html><head><meta charset='utf-8'></head><body>Upload erfolgreich! <a href='/?dir=" + targetDir + "'>Zurück</a></body></html>");
                 forceOverlay("Upload OK", 3, "success"); 
             }
@@ -243,7 +236,6 @@ public:
 
             if (upload.status == UPLOAD_FILE_START) {
                 uploadError = false; 
-                
                 String targetDir = "/";
                 if (server.hasArg("dir")) targetDir = server.arg("dir");
                 if (!targetDir.startsWith("/")) targetDir = "/" + targetDir;
@@ -251,9 +243,6 @@ public:
 
                 String filename = sanitizeFilename(upload.filename); 
                 String fullPath = targetDir + filename;
-
-                Serial.print("Web: Upload Start: "); Serial.println(fullPath);
-                
                 uploadFile = LittleFS.open(fullPath, "w");
                 if (!uploadFile) { uploadError = true; return; }
                 
@@ -266,22 +255,17 @@ public:
                 if (uploadError) return; 
                 if (uploadFile) {
                     size_t bytesWritten = uploadFile.write(upload.buf, upload.currentSize);
-                    
                     if (bytesWritten < upload.currentSize) {
-                        Serial.println("Web: Write failed - Disk likely Full");
                         uploadError = true; 
                         uploadFile.close();
-                        
                         String targetDir = "/";
                         if (server.hasArg("dir")) targetDir = server.arg("dir");
                         if (!targetDir.startsWith("/")) targetDir = "/" + targetDir;
                         if (!targetDir.endsWith("/")) targetDir += "/";
                         LittleFS.remove(targetDir + sanitizeFilename(upload.filename)); 
-                        
                         drawUploadStats("ERROR", 0, true); 
                         return;
                     }
-
                     uploadBytesWritten += bytesWritten;
                     drawUploadStats(upload.filename, uploadBytesWritten);
                     delay(1); 
@@ -316,9 +300,7 @@ public:
                 if (LittleFS.exists(filename)) {
                     LittleFS.remove(filename);
                     forceOverlay("Deleted", 2, "info");
-                    Serial.println("Web: Deleted " + filename);
                 }
-
                 int lastSlash = filename.lastIndexOf('/');
                 if (lastSlash > 0) {
                     String parent = filename.substring(0, lastSlash);
@@ -329,79 +311,113 @@ public:
             server.send(303);
         });
 
-        server.onNotFound([this]() {
-            String path = server.uri();
-            if (LittleFS.exists(path)) {
-                File file = LittleFS.open(path, "r");
-                server.streamFile(file, "application/octet-stream");
-                file.close();
-            } else {
-                server.send(404, "text/plain", "File not found");
-            }
-        });
-
-        server.begin();
-
-        // --- 6. PONG WEB-CONTROLLER (HTML) ---
+        // --- 7. PONG WEB-CONTROLLER (HTML) ---
         server.on("/pong", HTTP_GET, [this]() {
-            // Eine rohe HTML-Seite als Smartphone Gamepad
             const char* html = R"rawliteral(
             <!DOCTYPE html>
             <html>
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-              <title>Matrix Pong Controller</title>
+              <title>Matrix Pong</title>
               <style>
                 body { background: #111; color: #eee; font-family: Arial, sans-serif; text-align: center; margin: 0; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
-                .btn { display: block; background: #333; border: 2px solid #555; color: white; font-size: 30px; font-weight: bold; border-radius: 15px; width: 90%; margin: 10px auto; touch-action: none; }
-                .btn:active { background: #666; }
-                #setup { padding-top: 15vh; }
-                #game { display: none; height: 100vh; flex-direction: column; justify-content: center; align-items: center; }
-                .btn-join-p1 { height: 20vh; border-color: cyan; color: cyan; }
-                .btn-join-p2 { height: 20vh; border-color: magenta; color: magenta; }
-                .btn-start { height: 12vh; background: #006600; border-color: #00ff00; }
+                .btn { display: block; background: #333; border: 2px solid #555; color: white; font-size: 24px; font-weight: bold; border-radius: 15px; width: 90%; margin: 10px auto; touch-action: none; }
+                .btn:active { background: #555; }
+                
+                /* Layout 1: Einzelnes Handy (Normal) */
+                #setup { padding-top: 5vh; }
+                #game-single { display: none; height: 100vh; flex-direction: column; justify-content: center; align-items: center; }
+                
+                /* Layout 2: Split Screen (Querformat) */
+                #game-split { display: none; height: 100vh; flex-direction: row; justify-content: space-between; align-items: stretch; padding: 10px; box-sizing: border-box; }
+                .split-side { width: 40%; display: flex; flex-direction: column; justify-content: space-between; }
+                .split-center { width: 15%; display: flex; flex-direction: column; justify-content: center; }
+                
+                /* Button Stylings */
+                .btn-join-p1 { height: 15vh; border-color: cyan; color: cyan; }
+                .btn-join-p2 { height: 15vh; border-color: magenta; color: magenta; }
+                .btn-join-split { height: 15vh; border-color: gold; color: gold; margin-top: 30px; }
+                
+                .btn-start { height: 12vh; background: #006600; border-color: #00ff00; width: 100%; }
                 .btn-move { height: 35vh; }
+                .btn-move-split { height: 45vh; width: 100%; font-size: 30px; margin: 0; }
               </style>
               <script>
                 let player = 0;
-                function send(cmd) { fetch('/pong_ctrl?cmd=' + cmd + '&p=' + player); }
-                function join(p) {
+                
+                // Wir senden Player-ID als Parameter mit, damit 1 Browser P1 & P2 senden kann
+                function send(cmd, p) { 
+                    fetch('/pong_ctrl?cmd=' + cmd + '&p=' + p).catch(e => console.log(e)); 
+                }
+                
+                function joinSingle(p) {
                   player = p;
-                  send('join');
+                  send('join', p);
                   document.getElementById('setup').style.display = 'none';
-                  document.getElementById('game').style.display = 'flex';
-                  // Färbe die Buttons passend zum Spieler
+                  document.getElementById('game-single').style.display = 'flex';
                   let col = (p == 1) ? 'cyan' : 'magenta';
                   document.getElementById('btn-up').style.borderColor = col;
                   document.getElementById('btn-down').style.borderColor = col;
                 }
                 
-                // Touch/Mouse Events für flüssige Steuerung
-                function setupBtn(id, cmdDown, cmdUp) {
+                function joinSplit() {
+                  // Verzögerung für den zweiten Fetch, damit der ESP Webserver nicht verschluckt
+                  send('join', 1);
+                  setTimeout(function() { send('join', 2); }, 150);
+                  
+                  document.getElementById('setup').style.display = 'none';
+                  document.getElementById('game-split').style.display = 'flex';
+                }
+                
+                function setupBtn(id, cmdDown, cmdUp, targetPlayer) {
                     let btn = document.getElementById(id);
-                    btn.addEventListener('touchstart', function(e) { e.preventDefault(); send(cmdDown); });
-                    btn.addEventListener('touchend', function(e) { e.preventDefault(); send(cmdUp); });
-                    btn.addEventListener('mousedown', function(e) { e.preventDefault(); send(cmdDown); });
-                    btn.addEventListener('mouseup', function(e) { e.preventDefault(); send(cmdUp); });
+                    if(!btn) return;
+                    btn.addEventListener('touchstart', function(e) { e.preventDefault(); send(cmdDown, targetPlayer()); });
+                    btn.addEventListener('touchend', function(e) { e.preventDefault(); send(cmdUp, targetPlayer()); });
+                    btn.addEventListener('mousedown', function(e) { e.preventDefault(); send(cmdDown, targetPlayer()); });
+                    btn.addEventListener('mouseup', function(e) { e.preventDefault(); send(cmdUp, targetPlayer()); });
                 }
                 
                 window.onload = function() {
-                    setupBtn('btn-up', 'up', 'stop');
-                    setupBtn('btn-down', 'down', 'stop');
+                    // Setup für Single-Screen
+                    setupBtn('btn-up', 'up', 'stop', () => player);
+                    setupBtn('btn-down', 'down', 'stop', () => player);
+                    
+                    // Setup für Split-Screen (Feste IDs)
+                    setupBtn('btn-split-up-p1', 'up', 'stop', () => 1);
+                    setupBtn('btn-split-down-p1', 'down', 'stop', () => 1);
+                    setupBtn('btn-split-up-p2', 'up', 'stop', () => 2);
+                    setupBtn('btn-split-down-p2', 'down', 'stop', () => 2);
                 };
               </script>
             </head>
             <body>
               <div id="setup">
-                <h2>Matrix Pong Controller</h2>
-                <button class="btn btn-join-p1" onclick="join(1)">Join als Player 1<br>(CYAN)</button>
-                <button class="btn btn-join-p2" onclick="join(2)">Join als Player 2<br>(MAGENTA)</button>
+                <h2>Matrix Pong</h2>
+                <button class="btn btn-join-p1" onclick="joinSingle(1)">Join als P1 (CYAN)</button>
+                <button class="btn btn-join-p2" onclick="joinSingle(2)">Join als P2 (MAGENTA)</button>
+                <button class="btn btn-join-split" onclick="joinSplit()">&#128241; JOIN MULTITOUCH<br><small>(Handy quer drehen)</small></button>
               </div>
-              <div id="game">
-                <button class="btn btn-start" onclick="send('start')">START GAME</button>
+              
+              <div id="game-single">
+                <button class="btn btn-start" onclick="send('start', player)">START GAME</button>
                 <button id="btn-up" class="btn btn-move">&#9650; UP &#9650;</button>
                 <button id="btn-down" class="btn btn-move">&#9660; DOWN &#9660;</button>
+              </div>
+              
+              <div id="game-split">
+                <div class="split-side">
+                    <button id="btn-split-up-p1" class="btn btn-move-split" style="border-color:cyan; color:cyan;">&#9650;</button>
+                    <button id="btn-split-down-p1" class="btn btn-move-split" style="border-color:cyan; color:cyan;">&#9660;</button>
+                </div>
+                <div class="split-center">
+                    <button class="btn btn-start" onclick="send('start', 1)" style="height: 100vh; writing-mode: vertical-rl; transform: rotate(180deg);">START GAME</button>
+                </div>
+                <div class="split-side">
+                    <button id="btn-split-up-p2" class="btn btn-move-split" style="border-color:magenta; color:magenta;">&#9650;</button>
+                    <button id="btn-split-down-p2" class="btn btn-move-split" style="border-color:magenta; color:magenta;">&#9660;</button>
+                </div>
               </div>
             </body>
             </html>
@@ -410,7 +426,7 @@ public:
             server.send(200, "text/html", html);
         });
 
-        // --- 7. PONG WEB-CONTROLLER (Datenempfang) ---
+        // --- 8. PONG WEB-CONTROLLER (Datenempfang) ---
         server.on("/pong_ctrl", HTTP_GET, [this]() {
             if (server.hasArg("cmd") && server.hasArg("p")) {
                 String cmd = server.arg("cmd");
@@ -438,6 +454,19 @@ public:
             }
             server.send(200, "text/plain", "OK");
         });
+
+        server.onNotFound([this]() {
+            String path = server.uri();
+            if (LittleFS.exists(path)) {
+                File file = LittleFS.open(path, "r");
+                server.streamFile(file, "application/octet-stream");
+                file.close();
+            } else {
+                server.send(404, "text/plain", "File not found");
+            }
+        });
+
+        server.begin();
     }
 
     void handle() {
