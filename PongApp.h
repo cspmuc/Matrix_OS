@@ -123,9 +123,14 @@ public:
             }
             // Text Zeichnen...
             int textCenterX = (offsetX + qrSize) + (M_WIDTH - (offsetX + qrSize)) / 2;
-            richText.drawCentered(display, 14, "Scan", "Small", display.color565(0, 255, 255), textCenterX);
-            richText.drawCentered(display, 28, "to", "Small", display.color565(0, 255, 255), textCenterX);
-            richText.drawCentered(display, 42, "join", "Small", display.color565(0, 255, 255), textCenterX);
+            int w1 = richText.getTextWidth(display, "Scan", "Small");
+            richText.drawString(display, textCenterX - w1/2, 14, "Scan", "Small", display.color565(0, 255, 255));
+
+            int w2 = richText.getTextWidth(display, "to", "Small");
+            richText.drawString(display, textCenterX - w2/2, 28, "to", "Small", display.color565(0, 255, 255));
+
+            int w3 = richText.getTextWidth(display, "join", "Small");
+            richText.drawString(display, textCenterX - w3/2, 42, "join", "Small", display.color565(0, 255, 255));
         } else {
             // Spielfeld Zeichnen...
             for(int i=0; i<M_HEIGHT; i+=4) display.drawFastVLine(M_WIDTH/2, i, 2, display.color565(40,40,40));
