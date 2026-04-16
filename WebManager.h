@@ -152,6 +152,7 @@ public:
 
     void begin() {
         // --- 1. HAUPTSEITE (Speicheroptimiert - Kein "String chunk" mehr!) ---
+        // --- 1. HAUPTSEITE (Smart Buffer für TCP-Optimierung) ---
         server.on("/", HTTP_GET, [this]() {
             String path = "/";
             if (server.hasArg("dir")) path = server.arg("dir");
@@ -161,28 +162,32 @@ public:
             server.setContentLength(CONTENT_LENGTH_UNKNOWN);
             server.send(200, "text/html", ""); 
             
-            // Direktes Streaming an den Browser ohne RAM zu blockieren
-            server.sendContent("<html><head><meta charset='utf-8'><title>Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>");
-            server.sendContent("<h1>Storage: " + path + "</h1>");
+            // 1. Wir reservieren einen Puffer von 2KB. Das verhindert Fragmentierung im RAM.
+            String buffer;
+            buffer.reserve(2048);
+            
+            // 2. Wir füllen den Puffer mit dem Seitenkopf
+            buffer += "<html><head><meta charset='utf-8'><title>Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>";
+            buffer += "<h1>Storage: " + path + "</h1>";
             
             size_t total = LittleFS.totalBytes();
             size_t used = LittleFS.usedBytes();
-            server.sendContent("<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>");
+            buffer += "<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>";
             
-            server.sendContent("<div style='display: flex; gap: 10px; margin-bottom: 20px;'>");
-            server.sendContent("<form method='POST' action='/format' onsubmit='return confirm(\"Alles löschen?\")'><input type='submit' value='Formatieren (Alles löschen)' style='color:red; padding: 5px 10px;'></form>");
-            server.sendContent("<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten?\")'><input type='submit' value='Reboot ESP32' style='color:darkorange; padding: 5px 10px; font-weight: bold;'></form>");
-            server.sendContent("</div><hr><form method='POST' action='/upload?dir=" + path + "' enctype='multipart/form-data'><input type='file' name='upload'><input type='submit' value='Upload' style='padding: 5px 10px;'></form><hr>");
+            buffer += "<div style='display: flex; gap: 10px; margin-bottom: 20px;'>";
+            buffer += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles löschen?\")'><input type='submit' value='Formatieren (Alles löschen)' style='color:red; padding: 5px 10px;'></form>";
+            buffer += "<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten?\")'><input type='submit' value='Reboot ESP32' style='color:darkorange; padding: 5px 10px; font-weight: bold;'></form>";
+            buffer += "</div><hr><form method='POST' action='/upload?dir=" + path + "' enctype='multipart/form-data'><input type='file' name='upload'><input type='submit' value='Upload' style='padding: 5px 10px;'></form><hr>";
 
             if (path != "/") {
                 String parent = path.substring(0, path.length() - 1);
                 int lastSlash = parent.lastIndexOf('/');
                 if (lastSlash >= 0) parent = parent.substring(0, lastSlash + 1);
                 else parent = "/";
-                server.sendContent("<p><a href='/?dir=" + parent + "'>.. (Zurück)</a></p>");
+                buffer += "<p><a href='/?dir=" + parent + "'>.. (Zurück)</a></p>";
             }
 
-            server.sendContent("<table border='1' cellpadding='5' style='border-collapse: collapse; text-align: left;'><tr><th>Name</th><th>Size</th><th>Action</th></tr>");
+            buffer += "<table border='1' cellpadding='5' style='border-collapse: collapse; text-align: left;'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
 
             File root = LittleFS.open(path);
             if (root && root.isDirectory()) {
@@ -196,17 +201,27 @@ public:
                     if(path == "/") fullPath = "/" + fileName;
 
                     if(file.isDirectory()) {
-                        String line = "<tr><td><b><a href='/?dir=" + fullPath + "'>[" + fileName + "]</a></b></td><td>DIR</td><td>-</td></tr>";
-                        server.sendContent(line);
+                        buffer += "<tr><td><b><a href='/?dir=" + fullPath + "'>[" + fileName + "]</a></b></td><td>DIR</td><td>-</td></tr>";
                     } else {
-                        String line = "<tr><td><a href='" + fullPath + "'>" + fileName + "</a></td><td>" + String(file.size()) + " B</td><td><a href='/editor?file=" + fullPath + "'>Edit</a> | <a href='/delete?name=" + fullPath + "' style='color:red;'>Delete</a></td></tr>";
-                        server.sendContent(line); 
+                        buffer += "<tr><td><a href='" + fullPath + "'>" + fileName + "</a></td><td>" + String(file.size()) + " B</td><td><a href='/editor?file=" + fullPath + "'>Edit</a> | <a href='/delete?name=" + fullPath + "' style='color:red;'>Delete</a></td></tr>";
                     }
+                    
+                    // --- DER TRICK: Puffer nur senden, wenn er groß genug ist! ---
+                    // Reduziert die Netzwerkpakete von 30 auf 2 oder 3!
+                    if (buffer.length() > 1024) {
+                        server.sendContent(buffer);
+                        buffer = ""; // Puffer leeren
+                    }
+                    
                     file = root.openNextFile();
-                    yield(); // <--- Verhindert Blockieren des WLAN-Tasks!
                 }
             }
-            server.sendContent("</table></body></html>");
+            
+            // 3. Den Rest des Puffers und das HTML-Ende senden
+            buffer += "</table></body></html>";
+            server.sendContent(buffer); 
+            
+            // 4. Chunked Transfer sauber beenden
             server.sendContent(""); 
         });
 
