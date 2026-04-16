@@ -17,7 +17,17 @@
 #include "IconManager.h" 
 #include "ConfigManager.h"
 #include "WeatherApp.h"
+#include "PongApp.h"
+
 WeatherApp weatherApp;
+PongApp appPong;
+// --- NEU: Globale Pong Variablen definieren ---
+int pong_p1_dir = 0;
+int pong_p2_dir = 0;
+bool pong_p1_ready = false;
+bool pong_p2_ready = false;
+bool pong_start_trigger = false;
+
 AppMode currentApp = WORDCLOCK;
 int brightness = 150; 
 
@@ -326,6 +336,7 @@ void loop() {
             if (name == "ticker") return TICKER;
             if (name == "plasma") return PLASMA;
             if (name == "weather") return WEATHER; // <--- NEU
+            if (name == "pong") return PONG; // <--- ADD THIS
             return OFF;
         };
 
@@ -336,6 +347,7 @@ void loop() {
             if (mode == TICKER) return &appTicker;
             if (mode == PLASMA) return &appPlasma;
             if (mode == WEATHER) return &weatherApp; // <--- NEU
+            if (mode == PONG) return &appPong; // <--- ADD THIS
             return nullptr;
         };
         // ---------------------------------------------
@@ -458,6 +470,7 @@ void loop() {
                case TICKER:      screenUpdated = appTicker.draw(display, forceRedraw); break;
                case PLASMA:      screenUpdated = appPlasma.draw(display, forceRedraw); break;
                case WEATHER:     screenUpdated = weatherApp.draw(display, forceRedraw); break; // <--- NEU
+               case PONG:        screenUpdated = appPong.draw(display, forceRedraw); break; // <--- NEU
                case OFF:         display.clear(); screenUpdated = true; break;
              }
              

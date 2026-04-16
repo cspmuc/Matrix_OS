@@ -341,6 +341,103 @@ public:
         });
 
         server.begin();
+
+        // --- 6. PONG WEB-CONTROLLER (HTML) ---
+        server.on("/pong", HTTP_GET, [this]() {
+            // Eine rohe HTML-Seite als Smartphone Gamepad
+            const char* html = R"rawliteral(
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+              <title>Matrix Pong Controller</title>
+              <style>
+                body { background: #111; color: #eee; font-family: Arial, sans-serif; text-align: center; margin: 0; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+                .btn { display: block; background: #333; border: 2px solid #555; color: white; font-size: 30px; font-weight: bold; border-radius: 15px; width: 90%; margin: 10px auto; touch-action: none; }
+                .btn:active { background: #666; }
+                #setup { padding-top: 15vh; }
+                #game { display: none; height: 100vh; flex-direction: column; justify-content: center; align-items: center; }
+                .btn-join-p1 { height: 20vh; border-color: cyan; color: cyan; }
+                .btn-join-p2 { height: 20vh; border-color: magenta; color: magenta; }
+                .btn-start { height: 12vh; background: #006600; border-color: #00ff00; }
+                .btn-move { height: 35vh; }
+              </style>
+              <script>
+                let player = 0;
+                function send(cmd) { fetch('/pong_ctrl?cmd=' + cmd + '&p=' + player); }
+                function join(p) {
+                  player = p;
+                  send('join');
+                  document.getElementById('setup').style.display = 'none';
+                  document.getElementById('game').style.display = 'flex';
+                  // Färbe die Buttons passend zum Spieler
+                  let col = (p == 1) ? 'cyan' : 'magenta';
+                  document.getElementById('btn-up').style.borderColor = col;
+                  document.getElementById('btn-down').style.borderColor = col;
+                }
+                
+                // Touch/Mouse Events für flüssige Steuerung
+                function setupBtn(id, cmdDown, cmdUp) {
+                    let btn = document.getElementById(id);
+                    btn.addEventListener('touchstart', function(e) { e.preventDefault(); send(cmdDown); });
+                    btn.addEventListener('touchend', function(e) { e.preventDefault(); send(cmdUp); });
+                    btn.addEventListener('mousedown', function(e) { e.preventDefault(); send(cmdDown); });
+                    btn.addEventListener('mouseup', function(e) { e.preventDefault(); send(cmdUp); });
+                }
+                
+                window.onload = function() {
+                    setupBtn('btn-up', 'up', 'stop');
+                    setupBtn('btn-down', 'down', 'stop');
+                };
+              </script>
+            </head>
+            <body>
+              <div id="setup">
+                <h2>Matrix Pong Controller</h2>
+                <button class="btn btn-join-p1" onclick="join(1)">Join als Player 1<br>(CYAN)</button>
+                <button class="btn btn-join-p2" onclick="join(2)">Join als Player 2<br>(MAGENTA)</button>
+              </div>
+              <div id="game">
+                <button class="btn btn-start" onclick="send('start')">START GAME</button>
+                <button id="btn-up" class="btn btn-move">&#9650; UP &#9650;</button>
+                <button id="btn-down" class="btn btn-move">&#9660; DOWN &#9660;</button>
+              </div>
+            </body>
+            </html>
+            )rawliteral";
+            
+            server.send(200, "text/html", html);
+        });
+
+        // --- 7. PONG WEB-CONTROLLER (Datenempfang) ---
+        server.on("/pong_ctrl", HTTP_GET, [this]() {
+            if (server.hasArg("cmd") && server.hasArg("p")) {
+                String cmd = server.arg("cmd");
+                int p = server.arg("p").toInt();
+
+                if (cmd == "join") {
+                    if (p == 1) pong_p1_ready = true;
+                    if (p == 2) pong_p2_ready = true;
+                } 
+                else if (cmd == "start") {
+                    pong_start_trigger = true;
+                }
+                else if (cmd == "up") {
+                    if (p == 1) pong_p1_dir = -1;
+                    if (p == 2) pong_p2_dir = -1;
+                }
+                else if (cmd == "down") {
+                    if (p == 1) pong_p1_dir = 1;
+                    if (p == 2) pong_p2_dir = 1;
+                }
+                else if (cmd == "stop") {
+                    if (p == 1) pong_p1_dir = 0;
+                    if (p == 2) pong_p2_dir = 0;
+                }
+            }
+            server.send(200, "text/plain", "OK");
+        });
     }
 
     void handle() {

@@ -23,10 +23,16 @@
 #define OE_PIN  14
 
 // --- APP DEFINITIONEN ---
-enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, WEATHER, OFF, AUTO };
-
+enum AppMode { WORDCLOCK, SENSORS, TESTPATTERN, TICKER, PLASMA, WEATHER, PONG, OFF, AUTO };
 // --- OVERLAY DEFINITIONEN (NEU) ---
 enum OverlayType { OVL_TEXT, OVL_ANIM_GHOST };
 
 extern AppMode currentApp;
 extern int brightness;
+
+// --- NEU: PONG WEB-STEUERUNG ---
+extern int pong_p1_dir;  // -1 = hoch, 1 = runter, 0 = stop
+extern int pong_p2_dir;
+extern bool pong_p1_ready;
+extern bool pong_p2_ready;
+extern bool pong_start_trigger;
