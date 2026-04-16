@@ -313,7 +313,7 @@ public:
 
         // --- 7. PONG WEB-CONTROLLER (HTML) ---
         server.on("/pong", HTTP_GET, [this]() {
-            static const char html[] PROGMEM = R"rawliteral(
+            const char* html = R"rawliteral(
             <!DOCTYPE html>
             <html>
             <head>
@@ -423,7 +423,7 @@ public:
             </html>
             )rawliteral";
             
-            server.send_P(200, "text/html", html);
+            server.send(200, "text/html", html);
         });
 
         // --- 8. PONG WEB-CONTROLLER (Datenempfang) ---
