@@ -479,6 +479,9 @@ void loop() {
                  processAndDrawOverlay(display);
                  if (isOverlayActive) screenUpdated = true;
              }
+             // --- HIER DAS DEBUG OVERLAY EINFÜGEN ---
+             drawDebugOverlay(display); 
+             screenUpdated = true; // Immer true, damit die Anzeige jede Sekunde aktualisiert wird
              
              if (screenUpdated) display.show();
              wasOverlayActive = isOverlayActive;
@@ -490,4 +493,34 @@ void loop() {
         }
     }
     delay(1); 
+// --- NEU: Diagnose-Overlay Funktion ---
+void drawDebugOverlay(DisplayManager& display) {
+    // Werte in Kilobyte umrechnen
+    uint32_t freeHeap = ESP.getFreeHeap() / 1024;
+    uint32_t minHeap = ESP.getMinFreeHeap() / 1024; // Der niedrigste Stand seit Boot
+    uint32_t freePsram = ESP.getFreePsram() / 1024;
+
+    // Kleinen Systemfont nutzen (Größe 1)
+    display.setTextSize(1);
+    display.setFont(NULL); 
+    
+    // Hintergrund-Rechteck für bessere Lesbarkeit (optional)
+    display.fillRect(0, 0, 45, 25, display.color565(0, 0, 0));
+    
+    // Heap (Interner RAM) - Gelb
+    display.setCursor(1, 1);
+    display.setTextColor(display.color565(255, 255, 0));
+    display.printf("H:%uK", freeHeap);
+
+    // Min-Heap (Wichtig für Absturz-Analyse) - Orange
+    display.setCursor(1, 9);
+    display.setTextColor(display.color565(255, 150, 0));
+    display.printf("M:%uK", minHeap);
+
+    // PSRAM (Externer RAM) - Cyan
+    display.setCursor(1, 17);
+    display.setTextColor(display.color565(0, 255, 255));
+    display.printf("P:%uK", freePsram);
+}
+
 }
