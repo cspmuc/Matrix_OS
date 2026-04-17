@@ -450,9 +450,20 @@ void loop() {
                  if (isOverlayActive) screenUpdated = true;
              }
              
-             // --- HIER DAS DEBUG OVERLAY EINFÜGEN ---
-             drawDebugOverlay(display);
-             screenUpdated = true; 
+            // --- INTELLIGENTES DEBUG OVERLAY ---
+             if (configManager.system.show_debug_overlay) {
+                 static unsigned long lastDebugRedraw = 0;
+                 // 1. Zwinge die Matrix nur 1x pro Sekunde zu einem Update für die Zahlen
+                 if (now - lastDebugRedraw >= 1000) {
+                     screenUpdated = true; 
+                     lastDebugRedraw = now;
+                 }
+                 // 2. Zeichne das Overlay auf das Bild, WENN sich ohnehin etwas aktualisiert
+                 if (screenUpdated || forceRedraw) {
+                     drawDebugOverlay(display);
+                     screenUpdated = true; 
+                 }
+             }
 
              if (screenUpdated) display.show();
              wasOverlayActive = isOverlayActive;

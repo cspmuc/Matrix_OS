@@ -3,7 +3,7 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
-#include <vector> // <--- NEU: Für unsere App-Liste
+#include <vector> 
 
 #ifndef SPIRAM_ALLOCATOR_DEFINED
 #define SPIRAM_ALLOCATOR_DEFINED
@@ -41,14 +41,14 @@ struct TimeConfig {
 
 struct SystemConfig {
     String ota_password = "otaflash";
-    int startup_brightness = 150; // <--- NEU: Die Standard-Helligkeit beim Booten
+    int startup_brightness = 150; 
+    bool show_debug_overlay = false; // <--- NEU: Debug Overlay Schalter
 };
 
-// --- NEU: Konfiguration für den Auto-Modus ---
 struct AutoConfig {
-    bool enabled = true; // Startet standardmäßig im Auto-Modus
-    int wordclock_duration_sec = 20; // Wie lange die Uhr angezeigt wird
-    std::vector<String> apps = {"wordclock", "sensors", "plasma"}; // Standard-Rotation
+    bool enabled = true; 
+    int wordclock_duration_sec = 20; 
+    std::vector<String> apps = {"wordclock", "sensors", "plasma"}; 
 };
 
 // --- 2. Die Manager Klasse ---
@@ -58,7 +58,7 @@ public:
     MqttConfig mqtt;
     TimeConfig time;
     SystemConfig system;
-    AutoConfig autoMode; // <--- NEU: Die Auto-Instanz
+    AutoConfig autoMode; 
 
     void begin() {
         if (!LittleFS.exists("/config.json")) {
@@ -114,16 +114,15 @@ public:
         if (doc->containsKey("system")) {
             JsonObject sys = (*doc)["system"];
             system.ota_password = sys["ota_password"] | system.ota_password;
-            system.startup_brightness = sys["startup_brightness"] | system.startup_brightness; // <--- NEU
+            system.startup_brightness = sys["startup_brightness"] | system.startup_brightness; 
+            system.show_debug_overlay = sys["show_debug_overlay"] | system.show_debug_overlay; // <--- NEU
         }
 
-        // --- NEU: Auto-Modus Block einlesen ---
         if (doc->containsKey("auto")) {
             JsonObject a = (*doc)["auto"];
             autoMode.enabled = a["enabled"] | autoMode.enabled;
             autoMode.wordclock_duration_sec = a["wordclock_duration_sec"] | autoMode.wordclock_duration_sec;
             
-            // Wenn eine App-Liste im JSON steht, leeren wir den Standard und füllen neu auf
             if (a.containsKey("apps") && a["apps"].is<JsonArray>()) {
                 autoMode.apps.clear(); 
                 JsonArray jsonApps = a["apps"].as<JsonArray>();
