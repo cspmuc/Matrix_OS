@@ -29,8 +29,7 @@ bool pong_p2_ready = false;
 bool pong_start_trigger = false;
 
 AppMode currentApp = WORDCLOCK;
-int brightness = 150; 
-
+int brightness = 150;
 ConfigManager configManager;
 DisplayManager display;
 IconManager iconManager;
@@ -50,11 +49,10 @@ bool isBooting = true;
 struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
-
 struct OverlayMessage { 
     OverlayType type; // <--- NEU: Text oder Animation?
     String text; 
-    int durationSec; 
+    int durationSec;
     String colorName; 
     int scrollSpeed; 
     bool isUrgent;
@@ -73,7 +71,6 @@ int overlayBoxWidth = 0;
 bool overlayIsScrolling = false;
 int overlayBoxX = 0;
 int overlayBoxY = 0;
-
 const int frameDelay = 10;
 float fadeVal = 1.0;
 const float fadeStep = 0.1; 
@@ -81,7 +78,8 @@ AppMode displayedApp = WORDCLOCK;
 bool wasOverlayActive = false;
 
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
-    Serial.print("Overlay Queued: "); Serial.println(msg);
+    Serial.print("Overlay Queued: ");
+    Serial.println(msg);
     if (overlayQueue.size() < 5) overlayQueue.push_back({OVL_TEXT, msg, durationSec, colorName, scrollSpeed, false});
 }
 
@@ -124,6 +122,7 @@ void status(const String& msg, uint16_t color = 0xFFFF) {
       delay(50);
   }
 }
+
 void processAndDrawOverlay(DisplayManager& display) {
     unsigned long now = millis();
     if (isOverlayActive) { 
@@ -137,7 +136,6 @@ void processAndDrawOverlay(DisplayManager& display) {
         isOverlayActive = true; 
         overlayStartTime = now; 
         overlayEndTime = now + (currentOverlay.durationSec * 1000);
-        
         if (currentOverlay.type == OVL_TEXT) {
             Serial.println("Overlay Started: " + currentOverlay.text);
             String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
@@ -170,7 +168,6 @@ void processAndDrawOverlay(DisplayManager& display) {
             uint16_t borderColor = display.color565(80, 80, 80);
             if (currentOverlay.isUrgent) borderColor = display.color565(255, 100, 0);
             display.drawRect(overlayBoxX, overlayBoxY, overlayBoxWidth, boxH, borderColor);
-            
             int textY = overlayBoxY + (boxH / 2) + 5;
             if (!overlayIsScrolling) { 
                 richTextOverlay.drawCentered(display, textY, finalMsg, "Medium");
@@ -182,7 +179,7 @@ void processAndDrawOverlay(DisplayManager& display) {
                     overlayScrollX--;
                     overlayLastScrollStep = now;
                     int startX = overlayBoxX + overlayBoxWidth;
-                    int totalDist = overlayBoxWidth + overlayTextWidth + 20; 
+                    int totalDist = overlayBoxWidth + overlayTextWidth + 20;
                     if (overlayScrollX < (startX - totalDist)) overlayScrollX = startX;
                 }
                 richTextOverlay.drawString(display, overlayScrollX, textY, finalMsg, "Medium");
@@ -197,72 +194,63 @@ void processAndDrawOverlay(DisplayManager& display) {
         } 
         else if (currentOverlay.type == OVL_ANIM_GHOST) {
             // --- NEU: GHOST EYES ANIMATION ---
-            // Nur noch 1x abdunkeln für einen etwas helleren Hintergrund
             display.dimRect(0, 0, M_WIDTH, M_HEIGHT);
-            
             unsigned long elapsed = now - overlayStartTime;
             int totalDur = currentOverlay.durationSec * 1000;
-            
-            // Smarter Fade-In / Fade-Out mit butterweichen 255 Stufen!
             int eyeBright = 255;
             if (elapsed < 300) {
-                eyeBright = map(elapsed, 0, 300, 0, 255); // Einblenden in den ersten 300ms
+                eyeBright = map(elapsed, 0, 300, 0, 255);
             } else if (elapsed > totalDur - 300) {
-                eyeBright = map(totalDur - elapsed, 0, 300, 0, 255); // Ausblenden in den letzten 300ms
+                eyeBright = map(totalDur - elapsed, 0, 300, 0, 255);
             }
             
-            // Sicherstellen, dass der Wert nicht überläuft, und RGB Farbe mischen
             eyeBright = constrain(eyeBright, 0, 255);
             uint16_t eyeColor = display.color565(eyeBright, eyeBright, eyeBright);
             
-            // Etwas enger zusammen für ovale Augen
-            int leftEyeX = M_WIDTH / 2 - 14; 
+            int leftEyeX = M_WIDTH / 2 - 14;
             int rightEyeX = M_WIDTH / 2 + 14;
             int eyeY = M_HEIGHT / 2 - 2;
             
             int pupilleOffsetX = 0;
             bool isBlinking = false;
             
-            // Die Timeline (Das Drehbuch)
-            if (elapsed >= 600 && elapsed < 1300) pupilleOffsetX = -4;      // Blick Links
-            else if (elapsed >= 1300 && elapsed < 2000) pupilleOffsetX = 4; // Blick Rechts
-            else if (elapsed >= 2000 && elapsed < 2200) isBlinking = true;  // Kurzes Blinzeln
+            if (elapsed >= 600 && elapsed < 1300) pupilleOffsetX = -4;
+            else if (elapsed >= 1300 && elapsed < 2000) pupilleOffsetX = 4;
+            else if (elapsed >= 2000 && elapsed < 2200) isBlinking = true;
             
             if (!isBlinking) {
-                // Weiße Augäpfel als Ellipsen (Breite: 6, Höhe: 10)
                 display.fillEllipse(leftEyeX, eyeY, 6, 10, eyeColor);
                 display.fillEllipse(rightEyeX, eyeY, 6, 10, eyeColor);
-                
-                // Schwarze Pupillen (Bleiben Kreise, aber etwas kleiner)
                 display.fillCircle(leftEyeX + pupilleOffsetX, eyeY, 2, 0x0000);
                 display.fillCircle(rightEyeX + pupilleOffsetX, eyeY, 2, 0x0000);
             } else {
-                // Zugekniffene Augen (einfache Striche, passend zur Breite der Ellipsen)
                 display.drawFastHLine(leftEyeX - 5, eyeY, 11, eyeColor);
                 display.drawFastHLine(rightEyeX - 5, eyeY, 11, eyeColor);
             }
         }
     }
 }
+
+// Deklaration der Diagnose-Funktion, damit der Compiler sie kennt
+void drawDebugOverlay(DisplayManager& display);
+
 void setup() {
   Serial.begin(115200);
-  
   if (!display.begin()) while(1);
   
   status("Check Storage...", display.color565(255, 255, 255));
   bool fsMounted = storage.begin();
-  
   if (!fsMounted) { 
       status("Storage Fail!", display.color565(255, 0, 0)); 
       delay(1000);
-} else { 
+  } else { 
       status("Load Config...", display.color565(255, 255, 0)); 
       configManager.begin();
       if (configManager.autoMode.enabled) currentApp = AUTO;
-      brightness = configManager.system.startup_brightness; // <--- NEU: Helligkeit aus der Config setzen
-      status("Load Icons...", display.color565(255, 255, 0)); 
+      brightness = configManager.system.startup_brightness; 
+      status("Load Icons...", display.color565(255, 255, 0));
       iconManager.begin();
-}
+  }
   
   status("Connect WiFi...", display.color565(255, 255, 255));
   network.begin(); 
@@ -292,8 +280,8 @@ void setup() {
       network.loop(); 
       delay(50); 
       if(ntpRetryCount++ > 40) break;
-} 
-  weatherApp.setup(); // <--- NEU: WeatherApp initialisieren
+  } 
+  weatherApp.setup();
 
   status("Start in 3s", display.color565(0, 255, 0));
   delay(3000); 
@@ -303,13 +291,12 @@ void setup() {
 }
 
 unsigned long lastDebugTick = 0;
-
-// MERKER: War das Display aus?
 static bool wasDisplayOff = false;
 
 void loop() {
     unsigned long now = millis();
-  // Debug Ausgabe in der loop()
+    
+    // Debug Ausgabe in der loop()
     if (now - lastDebugTick > 2000) {
         Serial.print(F("Tick: "));
         Serial.print(now / 1000);
@@ -317,7 +304,6 @@ void loop() {
         Serial.print(F(" | Heap: ")); Serial.println(ESP.getFreeHeap());
         lastDebugTick = now;
     }
-}
 
     network.loop(); 
     webServer.handle();
@@ -327,7 +313,7 @@ void loop() {
         lastFrameTime = now;
         
         display.setBrightness(brightness);
-
+        
         // --- 1. HILFSFUNKTIONEN FÜR APP-INSTANZEN ---
         auto getAppModeByName = [](String name) -> AppMode {
             name.toLowerCase();
@@ -336,24 +322,23 @@ void loop() {
             if (name == "testpattern") return TESTPATTERN;
             if (name == "ticker") return TICKER;
             if (name == "plasma") return PLASMA;
-            if (name == "weather") return WEATHER; // <--- NEU
-            if (name == "pong") return PONG; // <--- ADD THIS
+            if (name == "weather") return WEATHER;
+            if (name == "pong") return PONG;
             return OFF;
         };
-
         auto getAppInstance = [](AppMode mode) -> App* {
             if (mode == WORDCLOCK) return &appWordClock;
             if (mode == SENSORS) return &appSensors;
             if (mode == TESTPATTERN) return &appTestPattern;
             if (mode == TICKER) return &appTicker;
             if (mode == PLASMA) return &appPlasma;
-            if (mode == WEATHER) return &weatherApp; // <--- NEU
-            if (mode == PONG) return &appPong; // <--- ADD THIS
+            if (mode == WEATHER) return &weatherApp;
+            if (mode == PONG) return &appPong;
             return nullptr;
         };
-        // ---------------------------------------------
-       // 1. ZUERST die Variablen deklarieren!
-        AppMode targetApp = currentApp; 
+        
+        // 1. ZUERST die Variablen deklarieren!
+        AppMode targetApp = currentApp;
         static int autoAppIndex = 0;
         static unsigned long autoAppFallbackTimer = 0;
 
@@ -363,13 +348,13 @@ void loop() {
             firstRun = false;
             autoAppFallbackTimer = millis();
             App* firstApp = getAppInstance(displayedApp);
-            if (firstApp) firstApp->onActive(); // Weckt die Wortuhr auf
+            if (firstApp) firstApp->onActive();
         }
 
-// --- 2. AUTO-ROTATION LOGIK ---
+        // --- 2. AUTO-ROTATION LOGIK ---
         if (currentApp == AUTO) {
             if (configManager.autoMode.apps.empty()) {
-                targetApp = WORDCLOCK; // Fallback, falls die Config leer ist
+                targetApp = WORDCLOCK;
             } else {
                 if (autoAppIndex >= configManager.autoMode.apps.size()) autoAppIndex = 0;
                 targetApp = getAppModeByName(configManager.autoMode.apps[autoAppIndex]);
@@ -377,7 +362,7 @@ void loop() {
                 App* runningApp = getAppInstance(displayedApp);
                 unsigned long activeTime = millis() - autoAppFallbackTimer;
                 
-                // --- NEU: Der 1-Sekunden Prio-Scanner ---
+                // --- Der 1-Sekunden Prio-Scanner ---
                 static unsigned long lastPrioScan = 0;
                 static float currentDurationMultiplier = 1.0;
                 
@@ -385,7 +370,6 @@ void loop() {
                     lastPrioScan = millis();
                     int highestSystemPrio = 3;
                     
-                    // Wir scannen nur die Apps, die auch in der Auto-Rotation sind!
                     for (const String& appName : configManager.autoMode.apps) {
                         App* app = getAppInstance(getAppModeByName(appName));
                         if (app) {
@@ -394,21 +378,15 @@ void loop() {
                         }
                     }
                     
-                    // Multiplikator setzen (1 = 40%, 2 = 60%, 3 = 100%)
                     if (highestSystemPrio == 1) currentDurationMultiplier = 0.4;
                     else if (highestSystemPrio == 2) currentDurationMultiplier = 0.6;
                     else currentDurationMultiplier = 1.0;
                 }
-                // ----------------------------------------
                 
                 bool ready = false;
-                // Faktor an die App übergeben!
-                if (runningApp) ready = runningApp->isReadyToSwitch(currentDurationMultiplier); 
-                
-// Fallback-Timer bleibt fest auf 60s, damit Prio-Apps nicht abgewürgt werden
+                if (runningApp) ready = runningApp->isReadyToSwitch(currentDurationMultiplier);
                 if (activeTime > 120000) ready = true;
-
-                // Wir wechseln nur, wenn die App fertig ist UND wir nicht gerade im Fade hängen
+                
                 if (ready && fadeVal >= 1.0 && displayedApp == targetApp) {
                     autoAppIndex++;
                     if (autoAppIndex >= configManager.autoMode.apps.size()) autoAppIndex = 0;
@@ -416,12 +394,11 @@ void loop() {
                 }
             }
         }
-        // --------------------------------
 
         bool appChanged = false;
         bool isFading = false;
         
-// --- 3. FADING LOGIK (inkl. Aufwecken der neuen App) ---
+        // --- 3. FADING LOGIK (inkl. Aufwecken der neuen App) ---
         if (displayedApp != targetApp) {
             fadeVal -= fadeStep;
             isFading = true; 
@@ -430,7 +407,6 @@ void loop() {
                 displayedApp = targetApp; 
                 appChanged = true;
                 
-                // Timer resetten & neue App aufwecken!
                 autoAppFallbackTimer = millis(); 
                 App* newApp = getAppInstance(displayedApp);
                 if (newApp) newApp->onActive(); 
@@ -440,38 +416,31 @@ void loop() {
                 fadeVal += fadeStep;
                 isFading = true; 
                 if (fadeVal >= 1.0) {
-                    fadeVal = 1.0; 
-                    // WICHTIG: Wir lassen isFading für DIESEN Frame noch auf true!
-                    // So wird das 100% Bild noch garantiert einmal gezeichnet.
+                    fadeVal = 1.0;
                 }
             } else {
-                // Erst im Frame DANACH beenden wir den Fading-Zustand komplett.
                 isFading = false;
             }
         }
         display.setAppFade(fadeVal);
-
+        
         if (brightness > 0) {
-             // LOGIK: Aufwachen erkennen
              bool justTurnedOn = wasDisplayOff;
              wasDisplayOff = false;
 
              bool overlayPending = !overlayQueue.empty();
              
-             // --- NEU: isFading zur forceRedraw Logik hinzugefügt ---
-             bool forceRedraw = appChanged || isOverlayActive ||
-                                overlayPending || (wasOverlayActive && !isOverlayActive) || justTurnedOn || isFading;
+             bool forceRedraw = appChanged || isOverlayActive || overlayPending || (wasOverlayActive && !isOverlayActive) || justTurnedOn || isFading;
              
              bool screenUpdated = false;
              switch(displayedApp) {
-               case WORDCLOCK:   screenUpdated = appWordClock.draw(display, forceRedraw);
-               break;
+               case WORDCLOCK:   screenUpdated = appWordClock.draw(display, forceRedraw); break;
                case SENSORS:     screenUpdated = appSensors.draw(display, forceRedraw); break;
                case TESTPATTERN: screenUpdated = appTestPattern.draw(display, forceRedraw); break;
                case TICKER:      screenUpdated = appTicker.draw(display, forceRedraw); break;
                case PLASMA:      screenUpdated = appPlasma.draw(display, forceRedraw); break;
-               case WEATHER:     screenUpdated = weatherApp.draw(display, forceRedraw); break; // <--- NEU
-               case PONG:        screenUpdated = appPong.draw(display, forceRedraw); break; // <--- NEU
+               case WEATHER:     screenUpdated = weatherApp.draw(display, forceRedraw); break;
+               case PONG:        screenUpdated = appPong.draw(display, forceRedraw); break;
                case OFF:         display.clear(); screenUpdated = true; break;
              }
              
@@ -480,23 +449,22 @@ void loop() {
                  processAndDrawOverlay(display);
                  if (isOverlayActive) screenUpdated = true;
              }
+             
              // --- HIER DAS DEBUG OVERLAY EINFÜGEN ---
-             drawDebugOverlay(display); 
-             screenUpdated = true; // Immer true, damit die Anzeige jede Sekunde aktualisiert wird
+             drawDebugOverlay(display);
+             screenUpdated = true; 
 
              if (screenUpdated) display.show();
              wasOverlayActive = isOverlayActive;
         } else { 
-             // LOGIK: Display ist AUS -> Merker setzen
              wasDisplayOff = true;
              display.clear();
              display.show(); 
         }
     }
     delay(1);
-} // <--- GANZ WICHTIG: Hier endet die loop() Funktion !!!
+} 
 
-// --- NEU: Diagnose-Overlay Funktion ---
 // --- GANZ UNTEN: Die optimierte Debug-Overlay Funktion ---
 void drawDebugOverlay(DisplayManager& display) {
     uint32_t freeHeap = ESP.getFreeHeap() / 1024;
@@ -507,16 +475,16 @@ void drawDebugOverlay(DisplayManager& display) {
     display.setFont(NULL);
     display.fillRect(0, 0, 45, 25, display.color565(0, 0, 0));
     
-    // RAM-Anzeige mit 0 Bytes dynamischem RAM (Keine Strings!)
+    // RAM-Anzeige (Konvertierung direkt beim Methodenaufruf)
     display.setCursor(1, 1);
     display.setTextColor(display.color565(255, 255, 0));
-    display.print(F("H:")); display.print(freeHeap); display.print(F("K"));
+    display.print(String("H:") + String(freeHeap) + String("K"));
     
     display.setCursor(1, 9);
     display.setTextColor(display.color565(255, 150, 0));
-    display.print(F("M:")); display.print(minHeap); display.print(F("K"));
+    display.print(String("M:") + String(minHeap) + String("K"));
     
     display.setCursor(1, 17);
     display.setTextColor(display.color565(0, 255, 255));
-    display.print(F("P:")); display.print(freePsram); display.print(F("K"));
+    display.print(String("P:") + String(freePsram) + String("K"));
 }
