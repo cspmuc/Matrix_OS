@@ -10,6 +10,7 @@
 #include <AnimatedGIF.h> 
 #include "DisplayManager.h"
 #include <esp_heap_caps.h> 
+#include <new> // <--- WICHTIG: Erforderlich für "placement new" im PSRAM
 
 #ifndef SPIRAM_ALLOCATOR_DEFINED
 #define SPIRAM_ALLOCATOR_DEFINED
@@ -70,7 +71,7 @@ struct PngAnimContext {
         uint8_t* alpha;   
         int frameW, frameH, frames; 
         bool isVertical;      
-        bool isRotated;       // <--- NEU: Merkt sich, ob das Bild gedreht ist
+        bool isRotated;       
         bool hasTransColor;
         uint32_t transColor; 
 };
@@ -92,8 +93,10 @@ private:
     const size_t MAX_CACHE_SIZE_STATIC = 20;
     const size_t MAX_CACHE_SIZE_ANIM = 10; 
     
-    PNG png; 
-    AnimatedGIF gif; 
+    // --- DIE OPTIMIERUNG ---
+    // Keine direkten Instanzen mehr, sondern Zeiger für den PSRAM!
+    PNG* png = nullptr; 
+    AnimatedGIF* gif = nullptr; 
 
     // --- Helper ---
     uint32_t read32(const uint8_t* data, int offset) {
@@ -256,7 +259,6 @@ private:
         if (y % 4 == 0) yield();
 
         if (ctx->isVertical) {
-            // --- MODUS 1: VERTIKAL (16x512) ---
             if (y >= ctx->frameH * ctx->frames) return 1;
             int f = y / ctx->frameH;           
             int rowInFrame = y % ctx->frameH;  
@@ -304,14 +306,10 @@ private:
                     uint8_t v = src[idx]; r = v; g = v; b = v; a = src[idx + (bpp==16?2:1)];
                 }
 
-                // --- NEU: Die magische Zurück-Drehung! ---
                 int targetIndex;
                 if (ctx->isRotated) {
-                    // Das Bild liegt auf der Seite (90° im Uhrzeigersinn).
-                    // Wir drehen die Pixel im RAM beim Speichern einfach um 90° zurück!
                     targetIndex = framePixelOffset + ((ctx->frameW - 1 - x) * ctx->frameW) + rowInFrame;
                 } else {
-                    // Normales, aufrechtes Bild
                     targetIndex = framePixelOffset + (rowInFrame * ctx->frameW) + x;
                 }
 
@@ -385,6 +383,7 @@ private:
     // --- 3. DIE SCHNELLE RAM-LADEFUNKTION ---
     AnimatedIcon* loadAnimFromPngSheet(String name, String filename, int frameW, int delayMs, bool rotated = false) {
         if (!LittleFS.exists(filename)) return nullptr;
+        if (!png) return nullptr; // Sicherheits-Check
         
         File f = LittleFS.open(filename, "r");
         if (!f) return nullptr;
@@ -402,19 +401,18 @@ private:
         }
         f.close();
 
-        if (png.openRAM(pngFileData, bytesRead, pngAnimDrawCallback) != PNG_SUCCESS) {
+        if (png->openRAM(pngFileData, bytesRead, pngAnimDrawCallback) != PNG_SUCCESS) {
             heap_caps_free(pngFileData);
             return nullptr;
         }
 
-        int imgW = png.getWidth();
-        int imgH = png.getHeight();
+        int imgW = png->getWidth();
+        int imgH = png->getHeight();
         
         bool isVertical = false;
         int frames = 1;
         int frameH = 16;
         
-        // --- AUTO-DETECT ---
         if (imgH > imgW) {
             isVertical = true;
             frames = imgH / imgW; 
@@ -440,7 +438,7 @@ private:
             if(anim->pixels) heap_caps_free(anim->pixels); 
             if(anim->alpha) heap_caps_free(anim->alpha); 
             if(anim->delays) heap_caps_free(anim->delays);
-            delete anim; png.close(); heap_caps_free(pngFileData); return nullptr; 
+            delete anim; png->close(); heap_caps_free(pngFileData); return nullptr; 
         }
 
         memset(anim->pixels, 0, numPixels * sizeof(uint16_t));
@@ -453,13 +451,13 @@ private:
         ctx.pixels = anim->pixels; ctx.alpha = anim->alpha;
         ctx.frameW = frameW; ctx.frameH = frameH; ctx.frames = frames;
         ctx.isVertical = isVertical; 
-        ctx.isRotated = rotated;     // <--- NEU: Übergabe an den Dekoder
-        int tColor = png.getTransparentColor(); 
+        ctx.isRotated = rotated;     
+        int tColor = png->getTransparentColor(); 
         ctx.hasTransColor = (tColor != -1); ctx.transColor = (uint32_t)tColor;
 
-        png.decode((void*)&ctx, 0);
+        png->decode((void*)&ctx, 0);
         
-        png.close();
+        png->close();
         heap_caps_free(pngFileData); 
         
         return anim;
@@ -511,9 +509,11 @@ private:
 
     CachedIcon* loadPngIconFromSheet(const SheetDef& sheet, int index) {
         if (!LittleFS.exists(sheet.filePath)) return nullptr;
-        if (png.open(sheet.filePath.c_str(), myOpen, myClose, myRead, mySeek, pngSheetDrawCallback) != PNG_SUCCESS) return nullptr;
+        if (!png) return nullptr;
 
-        int imgW = png.getWidth();
+        if (png->open(sheet.filePath.c_str(), myOpen, myClose, myRead, mySeek, pngSheetDrawCallback) != PNG_SUCCESS) return nullptr;
+
+        int imgW = png->getWidth();
         int cols = (sheet.cols > 0) ? sheet.cols : 1;
         int tileW = (sheet.tileW > 0) ? sheet.tileW : (imgW / cols);
         int tileH = (sheet.tileH > 0) ? sheet.tileH : tileW; 
@@ -523,19 +523,19 @@ private:
         newIcon->pixels = (uint16_t*)heap_caps_malloc(tileW * tileH * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         newIcon->alpha = (uint8_t*)heap_caps_malloc(tileW * tileH * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 
-        if (!newIcon->pixels || !newIcon->alpha) { delete newIcon; png.close(); return nullptr; }
+        if (!newIcon->pixels || !newIcon->alpha) { delete newIcon; png->close(); return nullptr; }
 
         PngExtractContext ctx;
         ctx.pixels = newIcon->pixels; ctx.alpha = newIcon->alpha;
         ctx.targetX = (index % cols) * tileW; ctx.targetY = (index / cols) * tileH;
         ctx.targetW = tileW; ctx.targetH = tileH; ctx.sheetW = imgW;
         
-        int transColor = png.getTransparentColor(); 
+        int transColor = png->getTransparentColor(); 
         ctx.hasTransColor = (transColor != -1);
         ctx.transColor = (uint32_t)transColor;
 
-        png.decode((void*)&ctx, 0);
-        png.close();
+        png->decode((void*)&ctx, 0);
+        png->close();
         return newIcon;
     }
 
@@ -596,10 +596,9 @@ private:
         if (!f) return 0;
         
         int32_t bytesRead = 0;
-        // Hartnäckige Schleife: Wir lesen so lange, bis wir ALLES haben, was verlangt wurde!
         while (bytesRead < length && f->available()) {
             int32_t r = f->read(buffer + bytesRead, length - bytesRead);
-            if (r <= 0) break; // Fehler oder Dateiende erreicht
+            if (r <= 0) break; 
             bytesRead += r;
         }
         return bytesRead;
@@ -610,7 +609,6 @@ private:
         if (!f) return 0;
         
         f->seek(position);
-        // Gibt immer die absolut echte Position im Dateisystem zurück
         return f->position(); 
     }
     
@@ -669,10 +667,10 @@ private:
             if (x_abs >= ctx->width || (pDraw->ucHasTransparency && s[x] == pDraw->ucTransparent)) continue;
             uint16_t palIdx = s[x] * 3;
             int idx = lineOffset + (x_abs * 4);
-            ctx->canvasBuffer[idx] = pPalette[palIdx+2];   // B
-            ctx->canvasBuffer[idx+1] = pPalette[palIdx+1]; // G
-            ctx->canvasBuffer[idx+2] = pPalette[palIdx];   // R
-            ctx->canvasBuffer[idx+3] = 255;                // A
+            ctx->canvasBuffer[idx] = pPalette[palIdx+2];   
+            ctx->canvasBuffer[idx+1] = pPalette[palIdx+1]; 
+            ctx->canvasBuffer[idx+2] = pPalette[palIdx];   
+            ctx->canvasBuffer[idx+3] = 255;                
         }
     }
 
@@ -716,6 +714,8 @@ private:
 
     bool downloadAndConvert(String id, String targetFolder, bool forceAnim) {
         if (WiFi.status() != WL_CONNECTED) return false;
+        if (!png || !gif) return false;
+
         LittleFS.remove("/temp_dl.dat");
         bool success = false;
         String outName = targetFolder + id + ".bmp";
@@ -733,10 +733,10 @@ private:
                 
                 if (gifRamBuffer && fSize > 50) {
                     fRead.read(gifRamBuffer, fSize); fRead.close();
-                    if (gif.open(gifRamBuffer, fSize, GIFDrawCallback)) {
+                    if (gif->open(gifRamBuffer, fSize, GIFDrawCallback)) {
                         GIFINFO info;
-                        if (gif.getInfo(&info) && info.iFrameCount > 0) {
-                            int w = gif.getCanvasWidth(), h = gif.getCanvasHeight();
+                        if (gif->getInfo(&info) && info.iFrameCount > 0) {
+                            int w = gif->getCanvasWidth(), h = gif->getCanvasHeight();
                             int frames = info.iFrameCount;
                             int totalH = h * frames;
                             size_t stripSize = w * totalH * 4, canvasSize = w * h * 4;
@@ -757,7 +757,7 @@ private:
                                     if (prevDispose == 2) memset(canvasBuffer, 0, canvasSize); 
                                     
                                     int frameDelayMs = 0;
-                                    gif.playFrame(false, &frameDelayMs, &ctx); 
+                                    gif->playFrame(false, &frameDelayMs, &ctx); 
                                     if (frameDelayMs < 20) frameDelayMs = 100; 
                                     
                                     if (fDly) {
@@ -769,7 +769,7 @@ private:
                                     prevDispose = ctx.dispose;
                                 }
                                 if (fDly) fDly.close();
-                                gif.close();
+                                gif->close();
                                 
                                 File fOut = LittleFS.open(outName, "w");
                                 writeBmpHeader(fOut, w, totalH);
@@ -796,22 +796,22 @@ private:
                  File fOut = LittleFS.open(outName, "w");
                  if(fOut) {
                      PngDownloadContext ctx; ctx.fOut = &fOut;
-                     if (png.open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, pngDownloadDraw) == PNG_SUCCESS) {
-                         ctx.w = png.getWidth();
-                         int tColor = png.getTransparentColor();
+                     if (png->open("/temp_dl.dat", myOpen, myClose, myRead, mySeek, pngDownloadDraw) == PNG_SUCCESS) {
+                         ctx.w = png->getWidth();
+                         int tColor = png->getTransparentColor();
                          ctx.hasTransColor = (tColor != -1); ctx.transColor = (uint32_t)tColor;
 
-                         int h = png.getHeight();
+                         int h = png->getHeight();
                          writeBmpHeader(fOut, ctx.w, -h); 
                          
                          ctx.lineBuffer = (uint8_t*)heap_caps_malloc(ctx.w * 4, MALLOC_CAP_SPIRAM);
                          if (ctx.lineBuffer) {
-                             png.decode((void*)&ctx, 0); 
+                             png->decode((void*)&ctx, 0); 
                              heap_caps_free(ctx.lineBuffer);
                              success = true;
                              Serial.println("[ICON] PNG Saved: " + outName);
                          }
-                         png.close();
+                         png->close();
                      }
                      fOut.close();
                      if(!success) LittleFS.remove(outName); 
@@ -826,7 +826,18 @@ public:
     IconManager() {}
     
     void begin() {
-        gif.begin(GIF_PALETTE_RGB888); 
+        // --- DIE OPTIMIERUNG ---
+        // Wir reservieren die 60 KB für die PNG- und GIF-Bibliotheken
+        // jetzt dynamisch auf dem PSRAM-Chip. Der interne Speicher bleibt leer!
+        void* pngMem = heap_caps_malloc(sizeof(PNG), MALLOC_CAP_SPIRAM);
+        if (pngMem) png = new (pngMem) PNG();
+
+        void* gifMem = heap_caps_malloc(sizeof(AnimatedGIF), MALLOC_CAP_SPIRAM);
+        if (gifMem) {
+            gif = new (gifMem) AnimatedGIF();
+            gif->begin(GIF_PALETTE_RGB888); 
+        }
+
         if (!LittleFS.exists("/icons")) LittleFS.mkdir("/icons");
         if (!LittleFS.exists("/iconsan")) LittleFS.mkdir("/iconsan");
     }
@@ -941,7 +952,7 @@ public:
                         String file = (*doc)["animations"][id]["file"].as<String>();
                         int frameW = (*doc)["animations"][id]["frame_width"] | 16;
                         int delayMs = (*doc)["animations"][id]["delay"] | 100;
-                        bool rotated = (*doc)["animations"][id]["rotated"] | false; // <--- NEU
+                        bool rotated = (*doc)["animations"][id]["rotated"] | false; 
 
                         foundInCatalog = true;
                         delete doc; doc = nullptr; f.close();
