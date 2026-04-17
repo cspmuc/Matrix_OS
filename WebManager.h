@@ -151,7 +151,7 @@ public:
     WebManager() : server(80) {}
 
     void begin() {
-        // --- 1. HAUPTSEITE (Zurück zu deiner originalen, funktionierenden Logik!) ---
+        // --- 1. HAUPTSEITE (Schon optimiert, bleibt so) ---
         server.on("/", HTTP_GET, [this]() {
             String path = "/";
             if (server.hasArg("dir")) path = server.arg("dir");
@@ -161,28 +161,27 @@ public:
             server.setContentLength(CONTENT_LENGTH_UNKNOWN);
             server.send(200, "text/html", ""); 
             
-            String chunk = "<html><head><meta charset='utf-8'><title>Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>";
-            chunk += "<h1>Storage: " + path + "</h1>";
+            server.sendContent(F("<html><head><meta charset='utf-8'><title>Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>"));
+            server.sendContent(F("<h1>Storage: ")); server.sendContent(path);
+            server.sendContent(F("</h1><p>Used: ")); server.sendContent(String(LittleFS.usedBytes()));
+            server.sendContent(F(" / ")); server.sendContent(String(LittleFS.totalBytes())); server.sendContent(F(" Bytes</p>"));
             
-            size_t total = LittleFS.totalBytes();
-            size_t used = LittleFS.usedBytes();
-            chunk += "<p>Used: " + String(used) + " / " + String(total) + " Bytes</p>";
-            
-            chunk += "<div style='display: flex; gap: 10px; margin-bottom: 20px;'>";
-            chunk += "<form method='POST' action='/format' onsubmit='return confirm(\"Alles löschen?\")'><input type='submit' value='Formatieren (Alles löschen)' style='color:red; padding: 5px 10px;'></form>";
-            chunk += "<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten?\")'><input type='submit' value='Reboot ESP32' style='color:darkorange; padding: 5px 10px; font-weight: bold;'></form>";
-            chunk += "</div><hr><form method='POST' action='/upload?dir=" + path + "' enctype='multipart/form-data'><input type='file' name='upload'><input type='submit' value='Upload' style='padding: 5px 10px;'></form><hr>";
+            server.sendContent(F("<div style='display: flex; gap: 10px; margin-bottom: 20px;'>"));
+            server.sendContent(F("<form method='POST' action='/format' onsubmit='return confirm(\"Alles löschen?\")'><input type='submit' value='Formatieren (Alles löschen)' style='color:red; padding: 5px 10px;'></form>"));
+            server.sendContent(F("<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten?\")'><input type='submit' value='Reboot ESP32' style='color:darkorange; padding: 5px 10px; font-weight: bold;'></form>"));
+            server.sendContent(F("</div><hr><form method='POST' action='/upload?dir="));
+            server.sendContent(path);
+            server.sendContent(F("' enctype='multipart/form-data'><input type='file' name='upload'><input type='submit' value='Upload' style='padding: 5px 10px;'></form><hr>"));
 
             if (path != "/") {
                 String parent = path.substring(0, path.length() - 1);
                 int lastSlash = parent.lastIndexOf('/');
                 if (lastSlash >= 0) parent = parent.substring(0, lastSlash + 1);
                 else parent = "/";
-                chunk += "<p><a href='/?dir=" + parent + "'>.. (Zurück)</a></p>";
+                server.sendContent(F("<p><a href='/?dir=")); server.sendContent(parent); server.sendContent(F("'>.. (Zurück)</a></p>"));
             }
 
-            chunk += "<table border='1' cellpadding='5' style='border-collapse: collapse; text-align: left;'><tr><th>Name</th><th>Size</th><th>Action</th></tr>";
-            server.sendContent(chunk);
+            server.sendContent(F("<table border='1' cellpadding='5' style='border-collapse: collapse; text-align: left;'><tr><th>Name</th><th>Size</th><th>Action</th></tr>"));
 
             File root = LittleFS.open(path);
             if (root && root.isDirectory()) {
@@ -196,61 +195,58 @@ public:
                     if(path == "/") fullPath = "/" + fileName;
 
                     if(file.isDirectory()) {
-                        String line = "<tr><td><b><a href='/?dir=" + fullPath + "'>[" + fileName + "]</a></b></td><td>DIR</td><td>-</td></tr>";
-                        server.sendContent(line); // Direktes Senden wie im Original
+                        server.sendContent(F("<tr><td><b><a href='/?dir=")); server.sendContent(fullPath);
+                        server.sendContent(F("'>[")); server.sendContent(fileName); server.sendContent(F("]</a></b></td><td>DIR</td><td>-</td></tr>"));
                     } else {
-                        String line = "<tr><td><a href='" + fullPath + "'>" + fileName + "</a></td><td>" + String(file.size()) + " B</td><td><a href='/editor?file=" + fullPath + "'>Edit</a> | <a href='/delete?name=" + fullPath + "' style='color:red;'>Delete</a></td></tr>";
-                        server.sendContent(line); // Direktes Senden wie im Original
+                        server.sendContent(F("<tr><td><a href='")); server.sendContent(fullPath); server.sendContent(F("'>"));
+                        server.sendContent(fileName); server.sendContent(F("</a></td><td>"));
+                        server.sendContent(String(file.size()));
+                        server.sendContent(F(" B</td><td><a href='/editor?file=")); server.sendContent(fullPath);
+                        server.sendContent(F("'>Edit</a> | <a href='/delete?name=")); server.sendContent(fullPath);
+                        server.sendContent(F("' style='color:red;'>Delete</a></td></tr>"));
                     }
                     file = root.openNextFile();
-                    yield(); // <--- Verhindert Blockieren des WLAN-Tasks bei vielen Dateien
+                    yield(); 
                 }
             }
-            server.sendContent("</table></body></html>");
+            server.sendContent(F("</table></body></html>"));
             server.sendContent(""); 
         });
 
-        // --- 2. EDITOR ---
+// --- 2. EDITOR (Jetzt RAM-schonend ge-streamed) ---
         server.on("/editor", HTTP_GET, [this]() {
-            if (!server.hasArg("file")) {
-                server.send(400, "text/plain", "Fehler: Keine Datei angegeben.");
-                return;
-            }
+            if (!server.hasArg("file")) { server.send(400, "text/plain", "Fehler: Keine Datei"); return; }
             String filename = server.arg("file");
-            if (!LittleFS.exists(filename)) {
-                server.send(404, "text/plain", "Fehler: Datei nicht gefunden.");
-                return;
-            }
+            if (!LittleFS.exists(filename)) { server.send(404, "text/plain", "Fehler: Datei nicht gefunden."); return; }
 
+            server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+            server.send(200, "text/html", "");
+
+            server.sendContent(F("<html><head><meta charset='utf-8'><title>Editor - Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>"));
+            server.sendContent(F("<h2>Editing: ")); server.sendContent(filename); server.sendContent(F("</h2>"));
+            
+            if (server.hasArg("saved")) server.sendContent(F("<p style='color: green; font-weight: bold;'>Datei gespeichert!</p>"));
+
+            server.sendContent(F("<form method='POST' action='/edit?file=")); server.sendContent(filename); server.sendContent(F("'>"));
+            server.sendContent(F("<textarea name='content' rows='25' style='width: 100%; max-width: 800px; font-family: monospace; white-space: pre;'>"));
+
+            // Datei direkt in den Browser streamen (ohne sie in einen String zu laden!)
             File f = LittleFS.open(filename, "r");
-            String content = f.readString();
-            f.close();
-
-            String html = "<html><head><meta charset='utf-8'><title>Editor - Matrix OS</title></head><body style='font-family: Arial, sans-serif;'>";
-            html += "<h2>Editing: " + filename + "</h2>";
-            
-            if (server.hasArg("saved")) {
-                html += "<p style='color: green; font-weight: bold;'>Datei erfolgreich gespeichert!</p>";
+            if (f) {
+                while(f.available()) {
+                    server.sendContent(f.readStringUntil('\n') + "\n");
+                    yield(); // Dem WLAN Zeit geben
+                }
+                f.close();
             }
 
-            html += "<form method='POST' action='/edit?file=" + filename + "'>";
-            html += "<textarea name='content' rows='25' style='width: 100%; max-width: 800px; font-family: monospace; white-space: pre;'>" + content + "</textarea><br><br>";
-            
-            html += "<div style='display: flex; gap: 15px;'>";
-            html += "<input type='submit' value='&#128190; Speichern' style='padding: 10px 20px; font-size: 16px; cursor: pointer;'>";
-            html += "</form>";
-
-            html += "<form method='POST' action='/reboot' onsubmit='return confirm(\"System jetzt neu starten um Änderungen zu übernehmen?\")'>";
-            html += "<input type='submit' value='&#8635; Reboot ESP32' style='padding: 10px 20px; font-size: 16px; color: darkorange; cursor: pointer;'></form>";
-            html += "</div>";
-
-            html += "<br><br><a href='/?dir=/'>&larr; Zurück zum Datei-Browser</a>";
-            html += "</body></html>";
-            
-            server.send(200, "text/html", html);
+            server.sendContent(F("</textarea><br><br>"));
+            server.sendContent(F("<div style='display: flex; gap: 15px;'><input type='submit' value='&#128190; Speichern' style='padding: 10px 20px; cursor: pointer;'></form>"));
+            server.sendContent(F("<form method='POST' action='/reboot'><input type='submit' value='&#8635; Reboot' style='padding: 10px 20px; color: darkorange; cursor: pointer;'></form></div>"));
+            server.sendContent(F("<br><br><a href='/?dir=/'>&larr; Zurück</a></body></html>"));
+            server.sendContent("");
         });
-
-        // --- 3. EDIT (Speichern) ---
+       // --- 3. EDIT (Speichern) ---
         server.on("/edit", HTTP_POST, [this]() {
             if (!server.hasArg("file") || !server.hasArg("content")) {
                 server.send(400, "text/plain", "Fehler: Fehlende Parameter.");
@@ -273,15 +269,14 @@ public:
             }
         });
 
-        // --- 4. REBOOT ---
+ // --- 4. REBOOT (Optimiert) ---
         server.on("/reboot", HTTP_POST, [this]() {
-            String html = "<html><head><meta charset='utf-8'><meta http-equiv='refresh' content='7; url=/'></head>";
-            html += "<body style='font-family: Arial, sans-serif; text-align: center; margin-top: 50px;'>";
-            html += "<h2>System startet neu...</h2>";
-            html += "<p>Bitte warten, du wirst in wenigen Sekunden automatisch weitergeleitet.</p>";
-            html += "</body></html>";
-            
-            server.send(200, "text/html", html);
+            server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+            server.send(200, "text/html", "");
+            server.sendContent(F("<html><head><meta charset='utf-8'><meta http-equiv='refresh' content='7; url=/'></head>"));
+            server.sendContent(F("<body style='font-family: Arial, sans-serif; text-align: center; margin-top: 50px;'>"));
+            server.sendContent(F("<h2>System startet neu...</h2><p>Bitte warten...</p></body></html>"));
+            server.sendContent("");
             delay(1000); 
             ESP.restart();
         });

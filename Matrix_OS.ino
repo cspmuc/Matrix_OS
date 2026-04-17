@@ -97,12 +97,13 @@ void queueAnimation(OverlayType animType, int durationSec) {
     if (overlayQueue.size() < 5) overlayQueue.push_back({animType, "", durationSec, "", 0, false});
 }
 
+// --- Bereich: status() Funktion ---
 void status(const String& msg, uint16_t color = 0xFFFF) {
-  Serial.print("[STATUS] "); Serial.println(msg);
-if (isBooting) {
+  Serial.print(F("[STATUS] ")); Serial.println(msg);
+  if (isBooting) {
       char buf[64]; sprintf(buf, "%02d %s", bootLogCounter++, msg.c_str());
       bootLogs.push_back({String(buf), color});
-if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
+      if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
       
       display.clear(); 
       display.setAppFade(1.0);
@@ -110,10 +111,10 @@ if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
       display.setFont(NULL); 
       
       int y = 0;
-for (const auto& entry : bootLogs) {
+      for (const auto& entry : bootLogs) {
         display.setTextColor(display.color565(100, 100, 100)); 
         display.setCursor(2, y);
-display.print(entry.text.substring(0, 3)); 
+        display.print(entry.text.substring(0, 3)); 
         display.setTextColor(entry.color); 
         display.setCursor(20, y); 
         display.print(entry.text.substring(3)); 
@@ -121,9 +122,8 @@ display.print(entry.text.substring(0, 3));
       }
       display.show(); 
       delay(50);
+  }
 }
-}
-
 void processAndDrawOverlay(DisplayManager& display) {
     unsigned long now = millis();
     if (isOverlayActive) { 
@@ -309,13 +309,14 @@ static bool wasDisplayOff = false;
 
 void loop() {
     unsigned long now = millis();
-    // Debug Ausgabe
+  // Debug Ausgabe in der loop()
     if (now - lastDebugTick > 2000) {
-        Serial.print("Tick: ");
+        Serial.print(F("Tick: "));
         Serial.print(now / 1000);
-        Serial.print(" | IP: "); Serial.print(WiFi.localIP()); 
-        Serial.print(" | Heap: "); Serial.println(ESP.getFreeHeap());
+        Serial.print(F(" | IP: ")); Serial.print(WiFi.localIP()); 
+        Serial.print(F(" | Heap: ")); Serial.println(ESP.getFreeHeap());
         lastDebugTick = now;
+    }
 }
 
     network.loop(); 
@@ -482,7 +483,7 @@ void loop() {
              // --- HIER DAS DEBUG OVERLAY EINFÜGEN ---
              drawDebugOverlay(display); 
              screenUpdated = true; // Immer true, damit die Anzeige jede Sekunde aktualisiert wird
-             
+
              if (screenUpdated) display.show();
              wasOverlayActive = isOverlayActive;
         } else { 
@@ -492,35 +493,30 @@ void loop() {
              display.show(); 
         }
     }
-    delay(1); 
-// --- NEU: Diagnose-Overlay Funktion ---
-void drawDebugOverlay(DisplayManager& display) {
-    // Werte in Kilobyte umrechnen
-    uint32_t freeHeap = ESP.getFreeHeap() / 1024;
-    uint32_t minHeap = ESP.getMinFreeHeap() / 1024; // Der niedrigste Stand seit Boot
-    uint32_t freePsram = ESP.getFreePsram() / 1024;
+    delay(1);
+} // <--- GANZ WICHTIG: Hier endet die loop() Funktion !!!
 
-    // Kleinen Systemfont nutzen (Größe 1)
-    display.setTextSize(1);
-    display.setFont(NULL); 
+// --- NEU: Diagnose-Overlay Funktion ---
+// --- GANZ UNTEN: Die optimierte Debug-Overlay Funktion ---
+void drawDebugOverlay(DisplayManager& display) {
+    uint32_t freeHeap = ESP.getFreeHeap() / 1024;
+    uint32_t minHeap = ESP.getMinFreeHeap() / 1024; 
+    uint32_t freePsram = ESP.getFreePsram() / 1024;
     
-    // Hintergrund-Rechteck für bessere Lesbarkeit (optional)
+    display.setTextSize(1);
+    display.setFont(NULL);
     display.fillRect(0, 0, 45, 25, display.color565(0, 0, 0));
     
-    // Heap (Interner RAM) - Gelb
+    // RAM-Anzeige mit 0 Bytes dynamischem RAM (Keine Strings!)
     display.setCursor(1, 1);
     display.setTextColor(display.color565(255, 255, 0));
-    display.printf("H:%uK", freeHeap);
-
-    // Min-Heap (Wichtig für Absturz-Analyse) - Orange
+    display.print(F("H:")); display.print(freeHeap); display.print(F("K"));
+    
     display.setCursor(1, 9);
     display.setTextColor(display.color565(255, 150, 0));
-    display.printf("M:%uK", minHeap);
-
-    // PSRAM (Externer RAM) - Cyan
+    display.print(F("M:")); display.print(minHeap); display.print(F("K"));
+    
     display.setCursor(1, 17);
     display.setTextColor(display.color565(0, 255, 255));
-    display.printf("P:%uK", freePsram);
-}
-
+    display.print(F("P:")); display.print(freePsram); display.print(F("K"));
 }
