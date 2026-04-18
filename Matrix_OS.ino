@@ -78,23 +78,25 @@ AppMode displayedApp = WORDCLOCK;
 bool wasOverlayActive = false;
 
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
+    if (displayedApp == PONG) return; // Ignoriert Text-Overlays während Pong
     Serial.print("Overlay Queued: ");
     Serial.println(msg);
     if (overlayQueue.size() < 5) overlayQueue.push_back({OVL_TEXT, msg, durationSec, colorName, scrollSpeed, false});
 }
 
 void forceOverlay(String msg, int durationSec, String colorName) {
+    // forceOverlay wird nicht blockiert! So siehst du z.B. noch "Saved!", 
+    // falls du im Hintergrund den Editor nutzt.
     overlayQueue.clear();
     isOverlayActive = false;
     overlayQueue.push_back({OVL_TEXT, msg, durationSec, colorName, 0, true});
 }
 
-// --- NEU: Queue-Helper für Animationen ---
 void queueAnimation(OverlayType animType, int durationSec) {
+    if (displayedApp == PONG) return; // Ignoriert den Geist (und andere Animationen) während Pong
     Serial.println("Animation Queued");
     if (overlayQueue.size() < 5) overlayQueue.push_back({animType, "", durationSec, "", 0, false});
 }
-
 // --- Bereich: status() Funktion ---
 void status(const String& msg, uint16_t color = 0xFFFF) {
   Serial.print(F("[STATUS] ")); Serial.println(msg);
