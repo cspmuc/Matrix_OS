@@ -46,6 +46,13 @@ WebManager webServer;
 MatrixNetworkManager network(currentApp, brightness, display, appSensors, configManager);
 bool isBooting = true;
 
+// --- NEU: Globale Timer für das SysInfo Overlay ---
+unsigned long sysInfoOverlayEndTime = 0;
+
+void triggerSysInfo(int durationSec) {
+    sysInfoOverlayEndTime = millis() + (durationSec * 1000UL);
+}
+
 struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
@@ -316,7 +323,6 @@ void loop() {
         
         display.setBrightness(brightness);
         
-        // OPTIMIERUNG: Nutzt const String& statt Kopie und equalsIgnoreCase statt toLowerCase()
         auto getAppModeByName = [](const String& name) -> AppMode {
             if (name.equalsIgnoreCase("wordclock")) return WORDCLOCK;
             if (name.equalsIgnoreCase("sensors")) return SENSORS;
@@ -448,7 +454,10 @@ void loop() {
                  if (isOverlayActive) screenUpdated = true;
              }
              
-             if (configManager.system.show_debug_overlay) {
+             // --- NEU: Zeigt Overlay, wenn config.json es sagt ODER der MQTT Timer noch läuft ---
+             bool showDebug = configManager.system.show_debug_overlay || (now < sysInfoOverlayEndTime);
+             
+             if (showDebug) {
                  static unsigned long lastDebugRedraw = 0;
                  if (now - lastDebugRedraw >= 1000) {
                      screenUpdated = true;
@@ -471,25 +480,46 @@ void loop() {
     delay(1);
 } 
 
-// OPTIMIERUNG: Keine String()-Erzeugung mehr für das RAM Overlay!
+// --- NEU: Erweitertes und platzsparendes Gesundheits-Overlay ---
 void drawDebugOverlay(DisplayManager& display) {
     uint32_t freeHeap = ESP.getFreeHeap() / 1024;
     uint32_t minHeap = ESP.getMinFreeHeap() / 1024; 
     uint32_t freePsram = ESP.getFreePsram() / 1024;
+    float temp = temperatureRead();
+    long rssi = WiFi.RSSI();
+    unsigned long upSecs = millis() / 1000;
+    int h = upSecs / 3600;
+    int m = (upSecs % 3600) / 60;
     
     display.setTextSize(1);
     display.setFont(NULL);
-    display.fillRect(0, 0, 45, 25, display.color565(0, 0, 0));
     
+    // Schwarzer Kasten, Höhe auf 25 Pixel reduziert (da IP fehlt)
+    display.fillRect(0, 0, M_WIDTH, 25, display.color565(0, 0, 0));
+    
+    // --- SPALTE 1 (Links): Speicher & WiFi ---
     display.setCursor(1, 1);
     display.setTextColor(display.color565(255, 255, 0));
-    display.print(F("H:")); display.print(freeHeap); display.print(F("K"));
+    display.print(F("H:")); display.print(freeHeap);
     
     display.setCursor(1, 9);
-    display.setTextColor(display.color565(255, 150, 0));
-    display.print(F("M:")); display.print(minHeap); display.print(F("K"));
-    
-    display.setCursor(1, 17);
     display.setTextColor(display.color565(0, 255, 255));
-    display.print(F("P:")); display.print(freePsram); display.print(F("K"));
+    display.print(F("P:")); display.print(freePsram);
+
+    display.setCursor(1, 17);
+    display.setTextColor(display.color565(100, 255, 100));
+    display.print(F("W:")); display.print(rssi);
+
+    // --- SPALTE 2 (Rechts): Gesundheit & Uptime (5 Pixel weiter nach rechts) ---
+    display.setCursor(38, 1);
+    display.setTextColor(display.color565(255, 150, 0));
+    display.print(F("M:")); display.print(minHeap);
+    
+    display.setCursor(38, 9);
+    display.setTextColor(display.color565(255, 100, 100));
+    display.print(F("T:")); display.print((int)temp); display.print(F("C"));
+    
+    display.setCursor(38, 17);
+    display.setTextColor(display.color565(200, 200, 200));
+    display.print(h); display.print(F("h")); display.print(m); display.print(F("m"));
 }

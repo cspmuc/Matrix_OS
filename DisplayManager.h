@@ -233,6 +233,7 @@ public:
     void print(const __FlashStringHelper* t) { if(canvas) canvas->print(t); }
     void print(int t) { if(canvas) canvas->print(t); }
     void print(uint32_t t) { if(canvas) canvas->print(t); }
+    void print(long t) { if(canvas) canvas->print(t); }
     
     void setTextSize(uint8_t s) { if(canvas) canvas->setTextSize(s); }
     void setFont(const GFXfont *f = NULL) { if(canvas) canvas->setFont(f); }

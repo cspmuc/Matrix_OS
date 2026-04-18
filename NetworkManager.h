@@ -16,9 +16,11 @@ extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
 extern void forceOverlay(String msg, int durationSec, String colorName);
 extern void queueAnimation(OverlayType animType, int durationSec); 
+// --- NEU: Globale Funktion für den MQTT Timer ---
+extern void triggerSysInfo(int durationSec);
+
 extern WeatherApp weatherApp;
 
-// Eigener Allocator für ArduinoJson, der den PSRAM zwingend nutzt
 #ifndef SPIRAM_ALLOCATOR_DEFINED
 #define SPIRAM_ALLOCATOR_DEFINED
 struct SpiRamAllocator {
@@ -71,6 +73,11 @@ private:
                 }
                 publishState();
              }
+             // --- NEU: Trigger via purem Text-Payload ---
+             if (t == "matrix/cmd/sysinfo") {
+                 triggerSysInfo(300); // 5 Minuten Fallback
+                 Serial.println("MQTT: SysInfo Overlay triggered (Text Payload)");
+             }
              delete doc;
              return;
         }
@@ -94,7 +101,6 @@ private:
             else if (newApp == "auto") currentAppRef = AUTO; 
             publishState(); 
             
-            // --- NEU: Overlay beim App-Wechsel (10 Sekunden) ---
             queueOverlay("Modus: " + newApp, 10, "cyan", 30);
         }     
         if (t == "matrix/cmd/overlay") {
@@ -121,6 +127,13 @@ private:
                 queueAnimation(OVL_ANIM_GHOST, dur);
             }
         }
+        // --- NEU: SysInfo Trigger mit JSON Payload ---
+        if (t == "matrix/cmd/sysinfo") {
+            int dur = (*doc)["duration"] | 300; // Standard 5 Minuten (300s)
+            triggerSysInfo(dur);
+            Serial.println("MQTT: SysInfo Overlay triggered (JSON Payload)");
+        }
+        
         if (t == "matrix/cmd/sensor_page") {
             String id = (*doc)["id"] | "default";
             String title = (*doc)["title"] | "INFO";
@@ -282,7 +295,6 @@ public:
         time_t now = time(nullptr);
         if (now > 1600000000) { 
             timeSynced = true;
-            // --- GEÄNDERT: Die Time-Synced-Meldung erscheint nun lautlos im Hintergrund ---
             Serial.println("Network: NTP Time Synchronized successfully.");
         }
     }
