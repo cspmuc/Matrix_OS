@@ -4,6 +4,9 @@
 #include "config.h" 
 #include "qrcode.h" 
 
+// --- NEU: Sicherer, globaler Reset-Trigger ohne die config.h anpassen zu müssen ---
+__attribute__((weak)) bool pong_end_trigger = false;
+
 class PongApp : public App {
 private:
     RichText richText;
@@ -12,7 +15,7 @@ private:
 
     float p1_y, p2_y;
     float bx, by, bvx, bvy;
-    float b_spin = 0.0f; // Der physikalische Spin
+    float b_spin = 0.0f; 
 
     int score1 = 0, score2 = 0;
     const int padH = 16; 
@@ -42,11 +45,9 @@ private:
         bvx = toP1 ? -1.0f : 1.0f; 
         bvy = (random(-10, 11) / 10.0f);
         
-        // Verhindert zu flache, horizontale Bälle
         if (abs(bvy) < 0.3f) {
             bvy = (bvy < 0) ? -0.3f : 0.3f;
         }
-        
         b_spin = 0.0f; 
     }
 
@@ -58,6 +59,7 @@ public:
         pong_p1_ready = false; pong_p2_ready = false;
         pong_p1_dir = 0; pong_p2_dir = 0;
         pong_start_trigger = false;
+        pong_end_trigger = false;
         serveToP1 = true;
         
         state = WAIT_PLAYERS;
@@ -79,6 +81,16 @@ public:
         // ==========================================
         // 1. SPIEL-LOGIK & TIMER 
         // ==========================================
+        
+        // NEU: END GAME Logik (Punkte nullen, zurück auf READY)
+        if (pong_end_trigger) {
+            pong_end_trigger = false;
+            score1 = 0; 
+            score2 = 0;
+            if (state != WAIT_PLAYERS) state = READY;
+            needsRedraw = true;
+        }
+
         if (state == WAIT_PLAYERS && (pong_p1_ready || pong_p2_ready)) state = READY;
         if (state > WAIT_PLAYERS && !pong_p1_ready && !pong_p2_ready) state = WAIT_PLAYERS;
 
@@ -113,52 +125,38 @@ public:
             bx += bvx; 
             by += bvy;
             
-            // --- KINEMATIK: Wand Kollision (Nutzt die BALL-AUSSENSEITE: by-1, by+1) ---
             if (by - 1 <= 0) {
-                by = 1;
-                bvy = -bvy;
+                by = 1; bvy = -bvy;
                 if (b_spin != 0.0f) {
                     bvy += b_spin * 0.2f; 
                     bvx += (bvx > 0 ? 1 : -1) * abs(b_spin) * 0.1f; 
-                    b_spin = 0.0f; // Spin aufgebraucht
+                    b_spin = 0.0f; 
                 }
             } 
             else if (by + 1 >= M_HEIGHT - 1) {
-                by = M_HEIGHT - 2;
-                bvy = -bvy;
+                by = M_HEIGHT - 2; bvy = -bvy;
                 if (b_spin != 0.0f) {
                     bvy -= b_spin * 0.2f; 
                     bvx += (bvx > 0 ? 1 : -1) * abs(b_spin) * 0.1f; 
-                    b_spin = 0.0f; // Spin aufgebraucht
+                    b_spin = 0.0f; 
                 }
             }
             
-            // --- KINEMATIK: Paddle Kollision ---
-            
-            // PADDLE 1 (Links)
-            // bx-1 ist die linke Außenseite des Balls. by ist die Mitte (entscheidet ob getroffen).
             if (bx - 1 <= 2 && by >= p1_y && by <= p1_y + padH) { 
                 bvx = -bvx * 1.05f; 
-                if (bvx > 3.0f) bvx = 3.0f; // Deckelung der X-Geschwindigkeit
+                if (bvx > 3.0f) bvx = 3.0f; 
                 bx = 4; 
                 
-                // Wo wurde getroffen? (0 bis 16)
                 float hitPoint = by - p1_y; 
-                
-                // Abgerundete Ecken - verändern den Winkel stark
                 if (hitPoint <= 2.0f) bvy -= 0.5f; 
                 else if (hitPoint >= padH - 2.0f) bvy += 0.5f; 
                 
-                // Spin - nur wenn Pad in Bewegung!
                 if (pong_p1_dir != 0) {
-                    b_spin = pong_p1_dir * 0.5f; // Leichter Spin aufgeladen
-                    bvy += pong_p1_dir * 0.2f;   // Direkter minimaler Kick
-                } else {
-                    b_spin = 0.0f; // Kein Spin
-                }
+                    b_spin = pong_p1_dir * 0.5f; 
+                    bvy += pong_p1_dir * 0.2f;   
+                } else b_spin = 0.0f;
             }
             
-            // PADDLE 2 (Rechts)
             if (bx + 1 >= M_WIDTH - 3 && by >= p2_y && by <= p2_y + padH) { 
                 bvx = -bvx * 1.05f; 
                 if (bvx < -3.0f) bvx = -3.0f;
@@ -171,36 +169,25 @@ public:
                 if (pong_p2_dir != 0) {
                     b_spin = pong_p2_dir * 0.5f; 
                     bvy += pong_p2_dir * 0.2f;
-                } else {
-                    b_spin = 0.0f;
-                }
+                } else b_spin = 0.0f;
             }
             
-            // Globale Y-Geschwindigkeits-Drossel (verhindert durch-glitchen)
             if (bvy > 3.5f) bvy = 3.5f;
             if (bvy < -3.5f) bvy = -3.5f;
             
-            // --- TORE ---
             if (bx < 0) { 
-                score2++; 
-                serveToP1 = true; 
-                stateTimer = now; 
-                needsRedraw = true; 
-                if (score2 >= 10) state = GAME_OVER;
-                else state = SCORED;
+                score2++; serveToP1 = true; stateTimer = now; needsRedraw = true; 
+                if (score2 >= 10) state = GAME_OVER; else state = SCORED;
             }
             if (bx > M_WIDTH) { 
-                score1++; 
-                serveToP1 = false;
-                stateTimer = now; 
-                needsRedraw = true; 
-                if (score1 >= 10) state = GAME_OVER;
-                else state = SCORED;
+                score1++; serveToP1 = false; stateTimer = now; needsRedraw = true; 
+                if (score1 >= 10) state = GAME_OVER; else state = SCORED;
             }
             needsRedraw = true; 
         } 
         else if (state == SCORED) {
-            if (now - stateTimer > 3000) {
+            // --- NEU: Goal Meldung auf 2 Sekunden (2000ms) verkürzt ---
+            if (now - stateTimer > 2000) {
                 state = COUNTDOWN; 
                 countdownValue = 3;
                 stateTimer = now;
@@ -264,7 +251,6 @@ public:
                 richText.drawString(display, tx - w3/2, startY + (lineH + 2) * 2, "{c:cyan}join", "Small");
             }
         } else {
-            // --- Z-Index 1: Scores ---
             if (state >= READY) {
                 uint16_t darkCyan = display.color565(0, 110, 110);    
                 uint16_t darkMagenta = display.color565(110, 0, 110); 
@@ -280,15 +266,12 @@ public:
                 richText.drawString(display, M_WIDTH/2 + 12, yCenter, s2, "Medium", darkMagenta);
             }
 
-            // --- Z-Index 2: Netz ---
             for(int i=0; i<M_HEIGHT; i+=4) display.drawFastVLine(M_WIDTH/2, i, 2, display.color565(70, 70, 70)); 
             
-            // --- Z-Index 3: PADDLES (Mit abgerundeten, dunklen Ecken) ---
             if (pong_p1_ready) {
-                display.fillRect(1, p1_y + 1, 2, padH - 2, 0x07FF); // Hauptkörper
-                display.drawPixel(1, p1_y, display.color565(0, 150, 150)); // Dunkle Ecke Oben
-                display.drawPixel(1, p1_y + padH - 1, display.color565(0, 150, 150)); // Dunkle Ecke Unten
-                // Die Front-Pixel (x=2) bleiben leer, das erzeugt die Rundung!
+                display.fillRect(1, p1_y + 1, 2, padH - 2, 0x07FF);
+                display.drawPixel(1, p1_y, display.color565(0, 150, 150));
+                display.drawPixel(1, p1_y + padH - 1, display.color565(0, 150, 150));
             }
             if (pong_p2_ready) {
                 display.fillRect(M_WIDTH-3, p2_y + 1, 2, padH - 2, 0xF81F);
@@ -296,7 +279,6 @@ public:
                 display.drawPixel(M_WIDTH-2, p2_y + padH - 1, display.color565(150, 0, 150));
             }
             
-            // --- Z-Index 4: BALL (3x3 gerundet) ---
             if (state == PLAYING) {
                 int ix = (int)bx; 
                 int iy = (int)by;
@@ -304,21 +286,18 @@ public:
                 uint16_t cGray = display.color565(180, 180, 180);
                 uint16_t cDark = display.color565(70, 70, 70);
                 
-                // Zentrum & Flanken
                 display.drawPixel(ix, iy, cWhite);
                 display.drawPixel(ix - 1, iy, cGray); 
                 display.drawPixel(ix + 1, iy, cGray);
                 display.drawPixel(ix, iy - 1, cGray); 
                 display.drawPixel(ix, iy + 1, cGray);
                 
-                // Ecken des 3x3 Balls dunkel schattiert
                 display.drawPixel(ix - 1, iy - 1, cDark); 
                 display.drawPixel(ix + 1, iy - 1, cDark);
                 display.drawPixel(ix - 1, iy + 1, cDark); 
                 display.drawPixel(ix + 1, iy + 1, cDark);
             }
             
-            // --- Z-Index 5: Text Overlays ---
             if (state == READY) {
                 richText.drawCentered(display, 18, "{c:warn}Press", "Small");
                 if ((now/500)%2==0) {
