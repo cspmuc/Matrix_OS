@@ -14,7 +14,6 @@ extern IconManager iconManager;
 #define COL_BLUE       0x001F
 #define COL_YELLOW     0xFFE0
 
-// Funktionale Farben
 #define COL_HIGHLIGHT  0xFD20 
 #define COL_WARN       0xF800 
 #define COL_SUCCESS    0x07E0 
@@ -23,11 +22,9 @@ extern IconManager iconManager;
 #define COL_WARM       0xFE60 
 #define COL_COLD       0x841F 
 
-// --- PREMIUM PALETTE ---
 #define COL_GOLD       0xFEA0 
 #define COL_SILVER     0x9492 
 
-// --- NEUE NEON PALETTE ---
 #define COL_NEON_PINK   0xF81F  
 #define COL_NEON_CYAN   0x07FF  
 #define COL_NEON_GREEN  0x07E0  
@@ -35,7 +32,6 @@ extern IconManager iconManager;
 #define COL_ORANGE      0xFD20  
 #define COL_MAGENTA     0xF81F  
 
-// --- SOFT PALETTE (Pastell) ---
 #define COL_SOFT_ROSE     0xFDB8  
 #define COL_SOFT_SKY      0x867D  
 #define COL_SOFT_MINT     0x9FF3  
@@ -61,26 +57,22 @@ class RichText {
 private:
     const uint8_t* iconFont = u8g2_font_unifont_t_symbols;
 
-    FontPair getFontByName(String name) {
-        if (name.equalsIgnoreCase("Small")) {
-            return { u8g2_font_helvR10_tf, u8g2_font_helvB10_tf, -1, 14, 11 };
-        }
-        if (name.equalsIgnoreCase("Medium")) {
-            return { u8g2_font_helvR12_tf, u8g2_font_helvB12_tf, -2, 16, 13 };
-        }
-        if (name.equalsIgnoreCase("Large")) {
-            return { u8g2_font_helvR18_tf, u8g2_font_helvB18_tf, -4, 24, 19 };
-        }
+    FontPair getFontByName(const String& name) {
+        if (name.equalsIgnoreCase("Small")) return { u8g2_font_helvR10_tf, u8g2_font_helvB10_tf, -1, 14, 11 };
+        if (name.equalsIgnoreCase("Medium")) return { u8g2_font_helvR12_tf, u8g2_font_helvB12_tf, -2, 16, 13 };
+        if (name.equalsIgnoreCase("Large")) return { u8g2_font_helvR18_tf, u8g2_font_helvB18_tf, -4, 24, 19 };
         return { u8g2_font_helvR12_tf, u8g2_font_helvB12_tf, -2, 16, 13 };
     }
 
-    uint16_t parseHexColor(DisplayManager& d, String hex) {
-        if (hex.startsWith("#")) hex.remove(0, 1);
-        long number = strtol(hex.c_str(), NULL, 16);
+    uint16_t parseHexColor(DisplayManager& d, const String& hex) {
+        // OPTIMIERUNG: Keine Kopie/Modification des Strings, direkter Zugriff via C-Pointer
+        const char* hexStr = hex.c_str();
+        if (hexStr[0] == '#') hexStr++; 
+        long number = strtol(hexStr, NULL, 16);
         return d.color565((number >> 16) & 0xFF, (number >> 8) & 0xFF, number & 0xFF);
     }
 
-    String getIconCode(String name) {
+    String getIconCode(const String& name) {
         if (name == "sun")      return "\u2600";
         if (name == "cloud")    return "\u2601";
         if (name == "rain")     return "\u2602";
@@ -125,7 +117,7 @@ private:
         return "?"; 
     }
 
-    String processTag(DisplayManager& d, String tag, RenderState& state, bool& isIcon, bool& isBitmapIcon, String& bitmapName, bool& isLametric, bool& isAnimated) {
+    String processTag(DisplayManager& d, const String& tag, RenderState& state, bool& isIcon, bool& isBitmapIcon, String& bitmapName, bool& isLametric, bool& isAnimated) {
         isIcon = false;
         isBitmapIcon = false;
         isLametric = false;
@@ -139,13 +131,11 @@ private:
             return ""; 
         }
 
-        // --- 1. TEXT ICON {ti:xxx} ---
         if (tag.startsWith("ti:")) {
             isIcon = true;
             return getIconCode(tag.substring(3));
         }
 
-        // --- 2. ICON SHEET {ic:xxx} ---
         if (tag.startsWith("ic:")) {
             isBitmapIcon = true;
             isLametric = false; 
@@ -153,7 +143,6 @@ private:
             return "";
         }
 
-        // --- 3. LAMETRIC NUMBER {ln:123} ---
         if (tag.startsWith("ln:")) {
             isBitmapIcon = true;
             isLametric = true; 
@@ -161,21 +150,20 @@ private:
             return "";
         }
 
-        // --- 4. LAMETRIC ANIMATED {la:123} ---
         if (tag.startsWith("la:")) {
             isBitmapIcon = true;
             isAnimated = true; 
             bitmapName = tag.substring(3);
             return "";
         }
-// --- NEU: 5. LOCAL ANIMATED {an:name} ---
+
         if (tag.startsWith("an:")) {
             isBitmapIcon = true;
             isAnimated = true; 
             bitmapName = tag.substring(3);
             return "";
         }
-        // --- 5. LAMETRIC TAG {lt:alias} ---
+
         if (tag.startsWith("lt:")) {
             String alias = tag.substring(3);
             String id = iconManager.resolveAlias(alias);
@@ -191,19 +179,17 @@ private:
         return getIconCode(tag);
     }
 
-    int drawPart(DisplayManager& d, int x, int y, String text, bool isIcon, bool isBitmapIcon, String bitmapName, bool isLametric, bool isAnimated, FontPair fonts, RenderState state) {
+    int drawPart(DisplayManager& d, int x, int y, const String& text, bool isIcon, bool isBitmapIcon, const String& bitmapName, bool isLametric, bool isAnimated, FontPair fonts, RenderState state) {
         d.setTextColor(state.color);
         
         if (isBitmapIcon) {
             if (isAnimated) {
-                // --- ANIMATED ---
                 int displayH = 16; 
                 int yCentered = y - (fonts.baselineOffset / 2) - (displayH / 2);
                 iconManager.drawAnimatedIcon(d, x, yCentered, bitmapName);
                 int displayW = iconManager.getAnimWidth(bitmapName);
                 return displayW + 1; 
             } else {
-                // --- STATIC ---
                 bool doUpscale = isLametric; 
                 int iconH = iconManager.getIconHeight(bitmapName);
                 int displayH = doUpscale ? 16 : iconH;
@@ -230,7 +216,7 @@ private:
         }
     }
 
-    int measurePart(DisplayManager& d, String text, bool isIcon, bool isBitmapIcon, String bitmapName, bool isLametric, bool isAnimated, FontPair fonts, bool bold) {
+    int measurePart(DisplayManager& d, const String& text, bool isIcon, bool isBitmapIcon, const String& bitmapName, bool isLametric, bool isAnimated, FontPair fonts, bool bold) {
         if (isBitmapIcon) {
             if (isAnimated) {
                  return iconManager.getAnimWidth(bitmapName) + 1;
@@ -249,7 +235,7 @@ private:
     }
 
 public:
-    uint16_t getColorByName(DisplayManager& d, String name) {
+    uint16_t getColorByName(DisplayManager& d, const String& name) {
         if (name.startsWith("#")) return parseHexColor(d, name);
         
         if (name.equalsIgnoreCase("white"))   return COL_WHITE;
@@ -286,11 +272,11 @@ public:
         return COL_WHITE;
     }
 
-    int getLineHeight(String fontName) { return getFontByName(fontName).lineHeight; }
+    int getLineHeight(const String& fontName) { return getFontByName(fontName).lineHeight; }
     
-    int getBaselineOffset(String fontName) { return getFontByName(fontName).baselineOffset; }
+    int getBaselineOffset(const String& fontName) { return getFontByName(fontName).baselineOffset; }
 
-    int getTextWidth(DisplayManager& d, String text, String fontName) {
+    int getTextWidth(DisplayManager& d, const String& text, const String& fontName) {
         FontPair fonts = getFontByName(fontName);
         int totalW = 0;
         RenderState state = {COL_WHITE, false, false};
@@ -322,12 +308,12 @@ public:
         return totalW;
     }
 
-    void drawCentered(DisplayManager& d, int y, String text, String fontName, uint16_t defaultColor = COL_WHITE) {
+    void drawCentered(DisplayManager& d, int y, const String& text, const String& fontName, uint16_t defaultColor = COL_WHITE) {
         int totalW = getTextWidth(d, text, fontName);
         drawString(d, (M_WIDTH - totalW) / 2, y, text, fontName, defaultColor);
     }
 
-    void drawString(DisplayManager& d, int x, int y, String text, String fontName, uint16_t defaultColor = COL_WHITE) {
+    void drawString(DisplayManager& d, int x, int y, const String& text, const String& fontName, uint16_t defaultColor = COL_WHITE) {
         FontPair fonts = getFontByName(fontName);
         RenderState state = {defaultColor, false, false};
         int cursorX = x;
@@ -357,7 +343,7 @@ public:
         }
     }
     
-    void drawBox(DisplayManager& d, int x, int y, int width, String text, String fontName, uint16_t defaultColor = COL_WHITE) {
+    void drawBox(DisplayManager& d, int x, int y, int width, const String& text, const String& fontName, uint16_t defaultColor = COL_WHITE) {
         FontPair fonts = getFontByName(fontName);
         RenderState state = {defaultColor, false, false};
         int startX = x;

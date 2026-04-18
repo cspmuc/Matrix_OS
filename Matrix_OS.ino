@@ -21,7 +21,7 @@
 
 WeatherApp weatherApp;
 PongApp appPong;
-// --- NEU: Globale Pong Variablen definieren ---
+
 int pong_p1_dir = 0;
 int pong_p2_dir = 0;
 bool pong_p1_ready = false;
@@ -45,12 +45,13 @@ WebManager webServer;
 
 MatrixNetworkManager network(currentApp, brightness, display, appSensors, configManager);
 bool isBooting = true;
-// FIX für den Boot-Screen
+
 struct BootLogEntry { String text; uint16_t color; };
 std::vector<BootLogEntry> bootLogs; 
 int bootLogCounter = 1;
+
 struct OverlayMessage { 
-    OverlayType type; // <--- NEU: Text oder Animation?
+    OverlayType type; 
     String text; 
     int durationSec;
     String colorName; 
@@ -71,6 +72,7 @@ int overlayBoxWidth = 0;
 bool overlayIsScrolling = false;
 int overlayBoxX = 0;
 int overlayBoxY = 0;
+
 const int frameDelay = 10;
 float fadeVal = 1.0;
 const float fadeStep = 0.1; 
@@ -78,33 +80,28 @@ AppMode displayedApp = WORDCLOCK;
 bool wasOverlayActive = false;
 
 void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed) {
-    // GEÄNDERT: Prüft auch currentApp, um Overlays schon WÄHREND des Fade-Übergangs zu Pong zu blockieren!
     if (currentApp == PONG || displayedApp == PONG) return; 
-    
     Serial.print("Overlay Queued: ");
     Serial.println(msg);
     if (overlayQueue.size() < 5) overlayQueue.push_back({OVL_TEXT, msg, durationSec, colorName, scrollSpeed, false});
 }
 
 void forceOverlay(String msg, int durationSec, String colorName) {
-    // forceOverlay wird nicht blockiert! 
     overlayQueue.clear();
     isOverlayActive = false;
     overlayQueue.push_back({OVL_TEXT, msg, durationSec, colorName, 0, true});
 }
 
 void queueAnimation(OverlayType animType, int durationSec) {
-    // GEÄNDERT: Prüft auch currentApp
     if (currentApp == PONG || displayedApp == PONG) return; 
-    
     Serial.println("Animation Queued");
     if (overlayQueue.size() < 5) overlayQueue.push_back({animType, "", durationSec, "", 0, false});
 }
-// --- Bereich: status() Funktion ---
+
 void status(const String& msg, uint16_t color = 0xFFFF) {
   Serial.print(F("[STATUS] ")); Serial.println(msg);
   if (isBooting) {
-      char buf[64]; sprintf(buf, "%02d %s", bootLogCounter++, msg.c_str());
+      char buf[64]; snprintf(buf, sizeof(buf), "%02d %s", bootLogCounter++, msg.c_str());
       bootLogs.push_back({String(buf), color});
       if (bootLogs.size() > 8) bootLogs.erase(bootLogs.begin());
       
@@ -134,7 +131,6 @@ void processAndDrawOverlay(DisplayManager& display) {
         if (now > overlayEndTime) isOverlayActive = false;
     }
     
-    // START EINES NEUEN OVERLAYS (Initialisierung)
     if (!isOverlayActive && !overlayQueue.empty()) {
         currentOverlay = overlayQueue.front();
         overlayQueue.pop_front();
@@ -161,10 +157,8 @@ void processAndDrawOverlay(DisplayManager& display) {
         }
     }
     
-    // ZEICHNEN
     if (isOverlayActive) {
         if (currentOverlay.type == OVL_TEXT) {
-            // --- STANDARD TEXT OVERLAY ---
             String finalMsg = "{c:" + currentOverlay.colorName + "}" + currentOverlay.text;
             int boxH = 34;
 
@@ -174,6 +168,7 @@ void processAndDrawOverlay(DisplayManager& display) {
             if (currentOverlay.isUrgent) borderColor = display.color565(255, 100, 0);
             display.drawRect(overlayBoxX, overlayBoxY, overlayBoxWidth, boxH, borderColor);
             int textY = overlayBoxY + (boxH / 2) + 5;
+            
             if (!overlayIsScrolling) { 
                 richTextOverlay.drawCentered(display, textY, finalMsg, "Medium");
             } else {
@@ -198,11 +193,11 @@ void processAndDrawOverlay(DisplayManager& display) {
             }
         } 
         else if (currentOverlay.type == OVL_ANIM_GHOST) {
-            // --- NEU: GHOST EYES ANIMATION ---
             display.dimRect(0, 0, M_WIDTH, M_HEIGHT);
             unsigned long elapsed = now - overlayStartTime;
             int totalDur = currentOverlay.durationSec * 1000;
             int eyeBright = 255;
+            
             if (elapsed < 300) {
                 eyeBright = map(elapsed, 0, 300, 0, 255);
             } else if (elapsed > totalDur - 300) {
@@ -236,7 +231,6 @@ void processAndDrawOverlay(DisplayManager& display) {
     }
 }
 
-// Deklaration der Diagnose-Funktion, damit der Compiler sie kennt
 void drawDebugOverlay(DisplayManager& display);
 
 void setup() {
@@ -245,6 +239,7 @@ void setup() {
   
   status("Check Storage...", display.color565(255, 255, 255));
   bool fsMounted = storage.begin();
+  
   if (!fsMounted) { 
       status("Storage Fail!", display.color565(255, 0, 0)); 
       delay(1000);
@@ -272,8 +267,10 @@ void setup() {
           retryCounter = 0;
       }
   }
+  
   status("I:" + network.getIp(), display.color565(0, 255, 0)); 
   delay(1000);
+  
   status("Start WebSrv...", display.color565(200, 200, 255)); 
   webServer.begin(); 
   
@@ -286,10 +283,11 @@ void setup() {
       delay(50); 
       if(ntpRetryCount++ > 40) break;
   } 
+  
   weatherApp.setup();
-
   status("Start in 3s", display.color565(0, 255, 0));
   delay(3000); 
+  
   isBooting = false;
   bootLogs.clear();
   bootLogs.shrink_to_fit();
@@ -301,7 +299,6 @@ static bool wasDisplayOff = false;
 void loop() {
     unsigned long now = millis();
     
-    // Debug Ausgabe in der loop()
     if (now - lastDebugTick > 2000) {
         Serial.print(F("Tick: "));
         Serial.print(now / 1000);
@@ -319,18 +316,18 @@ void loop() {
         
         display.setBrightness(brightness);
         
-        // --- 1. HILFSFUNKTIONEN FÜR APP-INSTANZEN ---
-        auto getAppModeByName = [](String name) -> AppMode {
-            name.toLowerCase();
-            if (name == "wordclock") return WORDCLOCK;
-            if (name == "sensors") return SENSORS;
-            if (name == "testpattern") return TESTPATTERN;
-            if (name == "ticker") return TICKER;
-            if (name == "plasma") return PLASMA;
-            if (name == "weather") return WEATHER;
-            if (name == "pong") return PONG;
+        // OPTIMIERUNG: Nutzt const String& statt Kopie und equalsIgnoreCase statt toLowerCase()
+        auto getAppModeByName = [](const String& name) -> AppMode {
+            if (name.equalsIgnoreCase("wordclock")) return WORDCLOCK;
+            if (name.equalsIgnoreCase("sensors")) return SENSORS;
+            if (name.equalsIgnoreCase("testpattern")) return TESTPATTERN;
+            if (name.equalsIgnoreCase("ticker")) return TICKER;
+            if (name.equalsIgnoreCase("plasma")) return PLASMA;
+            if (name.equalsIgnoreCase("weather")) return WEATHER;
+            if (name.equalsIgnoreCase("pong")) return PONG;
             return OFF;
         };
+        
         auto getAppInstance = [](AppMode mode) -> App* {
             if (mode == WORDCLOCK) return &appWordClock;
             if (mode == SENSORS) return &appSensors;
@@ -342,12 +339,10 @@ void loop() {
             return nullptr;
         };
         
-        // 1. ZUERST die Variablen deklarieren!
         AppMode targetApp = currentApp;
         static int autoAppIndex = 0;
         static unsigned long autoAppFallbackTimer = 0;
 
-        // 2. DANN den ersten Start initialisieren!
         static bool firstRun = true;
         if (firstRun) {
             firstRun = false;
@@ -356,7 +351,6 @@ void loop() {
             if (firstApp) firstApp->onActive();
         }
 
-        // --- 2. AUTO-ROTATION LOGIK ---
         if (currentApp == AUTO) {
             if (configManager.autoMode.apps.empty()) {
                 targetApp = WORDCLOCK;
@@ -367,7 +361,6 @@ void loop() {
                 App* runningApp = getAppInstance(displayedApp);
                 unsigned long activeTime = millis() - autoAppFallbackTimer;
                 
-                // --- Der 1-Sekunden Prio-Scanner ---
                 static unsigned long lastPrioScan = 0;
                 static float currentDurationMultiplier = 1.0;
                 
@@ -403,7 +396,6 @@ void loop() {
         bool appChanged = false;
         bool isFading = false;
         
-        // --- 3. FADING LOGIK (inkl. Aufwecken der neuen App) ---
         if (displayedApp != targetApp) {
             fadeVal -= fadeStep;
             isFading = true; 
@@ -414,7 +406,7 @@ void loop() {
                 
                 autoAppFallbackTimer = millis(); 
                 App* newApp = getAppInstance(displayedApp);
-                if (newApp) newApp->onActive(); 
+                if (newApp) newApp->onActive();
             }
         } else { 
             if (fadeVal < 1.0) { 
@@ -435,7 +427,8 @@ void loop() {
 
              bool overlayPending = !overlayQueue.empty();
              
-             bool forceRedraw = appChanged || isOverlayActive || overlayPending || (wasOverlayActive && !isOverlayActive) || justTurnedOn || isFading;
+             bool forceRedraw = appChanged || isOverlayActive || overlayPending || (wasOverlayActive && !isOverlayActive) ||
+                                justTurnedOn || isFading;
              
              bool screenUpdated = false;
              switch(displayedApp) {
@@ -455,15 +448,12 @@ void loop() {
                  if (isOverlayActive) screenUpdated = true;
              }
              
-            // --- INTELLIGENTES DEBUG OVERLAY ---
              if (configManager.system.show_debug_overlay) {
                  static unsigned long lastDebugRedraw = 0;
-                 // 1. Zwinge die Matrix nur 1x pro Sekunde zu einem Update für die Zahlen
                  if (now - lastDebugRedraw >= 1000) {
-                     screenUpdated = true; 
+                     screenUpdated = true;
                      lastDebugRedraw = now;
                  }
-                 // 2. Zeichne das Overlay auf das Bild, WENN sich ohnehin etwas aktualisiert
                  if (screenUpdated || forceRedraw) {
                      drawDebugOverlay(display);
                      screenUpdated = true; 
@@ -481,7 +471,7 @@ void loop() {
     delay(1);
 } 
 
-// --- GANZ UNTEN: Die optimierte Debug-Overlay Funktion ---
+// OPTIMIERUNG: Keine String()-Erzeugung mehr für das RAM Overlay!
 void drawDebugOverlay(DisplayManager& display) {
     uint32_t freeHeap = ESP.getFreeHeap() / 1024;
     uint32_t minHeap = ESP.getMinFreeHeap() / 1024; 
@@ -491,16 +481,15 @@ void drawDebugOverlay(DisplayManager& display) {
     display.setFont(NULL);
     display.fillRect(0, 0, 45, 25, display.color565(0, 0, 0));
     
-    // RAM-Anzeige (Konvertierung direkt beim Methodenaufruf)
     display.setCursor(1, 1);
     display.setTextColor(display.color565(255, 255, 0));
-    display.print(String("H:") + String(freeHeap) + String("K"));
+    display.print(F("H:")); display.print(freeHeap); display.print(F("K"));
     
     display.setCursor(1, 9);
     display.setTextColor(display.color565(255, 150, 0));
-    display.print(String("M:") + String(minHeap) + String("K"));
+    display.print(F("M:")); display.print(minHeap); display.print(F("K"));
     
     display.setCursor(1, 17);
     display.setTextColor(display.color565(0, 255, 255));
-    display.print(String("P:") + String(freePsram) + String("K"));
+    display.print(F("P:")); display.print(freePsram); display.print(F("K"));
 }

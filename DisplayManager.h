@@ -8,21 +8,16 @@
 class PSRAMCanvas16 : public Adafruit_GFX {
 private:
     uint16_t *buffer;
-    uint32_t fadeInt = 256; // NEU: High-Speed Integer-Multiplikator (0 bis 256) statt Float
+    uint32_t fadeInt = 256; 
 
-    // NEU: Super-schnelle Ganzzahl-Mathematik mit Bitshifting
     uint16_t applyFade(uint16_t color) {
-        // Wenn volle Helligkeit, spare dir jegliche Mathematik!
         if (fadeInt >= 256) return color;
-        // Wenn unsichtbar, mach es direkt schwarz!
         if (fadeInt == 0) return 0;
         
-        // Farben isolieren
         uint32_t r = (color >> 11) & 0x1F;
         uint32_t g = (color >> 5) & 0x3F;
         uint32_t b = color & 0x1F;
         
-        // Schnelle Ganzzahl-Multiplikation und Bitshift (entspricht exakt / 256)
         r = (r * fadeInt) >> 8;
         g = (g * fadeInt) >> 8;
         b = (b * fadeInt) >> 8;
@@ -39,13 +34,11 @@ public:
     }
     uint16_t* getBuffer() { return buffer; }
     
-    // NEU: Der Float-Wert wird nur noch 1x pro Frame in einen Integer übersetzt!
     void setAppFade(float f) { 
         fadeInt = (uint32_t)(f * 256.0f);
         if (fadeInt > 256) fadeInt = 256;
     }
     
-    // --- Überschriebene Zeichenfunktionen (inkl. Fade) ---
     void drawPixel(int16_t x, int16_t y, uint16_t color) override {
         if (x < 0 || y < 0 || x >= _width || y >= _height) return;
         buffer[y * _width + x] = applyFade(color); 
@@ -142,14 +135,14 @@ public:
 
     void setU8g2Font(const uint8_t* font) { u8g2.setFont(font); }
 
-    void drawString(int x, int y, String text, uint16_t color) {
+    void drawString(int x, int y, const String& text, uint16_t color) {
         u8g2.setFontMode(1); 
         u8g2.setForegroundColor(color); 
         u8g2.setCursor(x, y); 
         u8g2.print(text);
     }
 
-    void drawCenteredString(int y, String text, uint16_t color) {
+    void drawCenteredString(int y, const String& text, uint16_t color) {
         u8g2.setFontMode(1); 
         u8g2.setForegroundColor(color);
         int w = u8g2.getUTF8Width(text.c_str());
@@ -158,7 +151,7 @@ public:
         u8g2.print(text);
     }
 
-    void drawUnderlinedString(int y, String text, uint16_t color) {
+    void drawUnderlinedString(int y, const String& text, uint16_t color) {
         u8g2.setFontMode(1); 
         u8g2.setForegroundColor(color);
         int w = u8g2.getUTF8Width(text.c_str());
@@ -168,9 +161,8 @@ public:
         if(canvas) canvas->drawFastHLine(x, y + 2, w, color);
     }
 
-    int getTextWidth(String text) { return u8g2.getUTF8Width(text.c_str()); }
+    int getTextWidth(const String& text) { return u8g2.getUTF8Width(text.c_str()); }
 
-    // --- NEU: Leitet den Fade an die Canvas weiter ---
     void setAppFade(float f) {
         if (f < 0.0) f = 0.0; if (f > 1.0) f = 1.0;
         if(canvas) canvas->setAppFade(f);
@@ -199,10 +191,11 @@ public:
     void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) { if(canvas) canvas->drawFastHLine(x, y, w, c); }
     void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) { if(canvas) canvas->drawFastVLine(x, y, h, c); }
     void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) { if(canvas) canvas->drawRect(x, y, w, h, c); }
-    // --- NEU: Für die Geisteraugen ---
+    
     void fillCircle(int16_t x0, int16_t y0, int16_t r, uint16_t c) { if(canvas) canvas->fillCircle(x0, y0, r, c); }
     void drawCircle(int16_t x0, int16_t y0, int16_t r, uint16_t c) { if(canvas) canvas->drawCircle(x0, y0, r, c); }
     void fillEllipse(int16_t x0, int16_t y0, int16_t rx, int16_t ry, uint16_t c) { if(canvas) canvas->fillEllipse(x0, y0, rx, ry, c); }
+    
     void dimRect(int x, int y, int w, int h) {
         if (!canvas) return;
         
@@ -233,12 +226,19 @@ public:
     
     void setTextColor(uint16_t c) { if(canvas) canvas->setTextColor(c); }
     void setCursor(int16_t x, int16_t y) { if(canvas) canvas->setCursor(x, y); }
-    void print(String t) { if(canvas) canvas->print(t); }
+    
+    // --- OPTIMIERUNG: Null-Allocation Print Überladungen ---
+    void print(const String& t) { if(canvas) canvas->print(t); }
+    void print(const char* t) { if(canvas) canvas->print(t); }
+    void print(const __FlashStringHelper* t) { if(canvas) canvas->print(t); }
+    void print(int t) { if(canvas) canvas->print(t); }
+    void print(uint32_t t) { if(canvas) canvas->print(t); }
+    
     void setTextSize(uint8_t s) { if(canvas) canvas->setTextSize(s); }
     void setFont(const GFXfont *f = NULL) { if(canvas) canvas->setFont(f); }
     void setTextWrap(bool w) { if(canvas) canvas->setTextWrap(w); }
     
-    void printCentered(String text, int y) {
+    void printCentered(const String& text, int y) {
         u8g2.setFontMode(1); 
         u8g2.setForegroundColor(0xFFFF); 
         int w = u8g2.getUTF8Width(text.c_str());
@@ -247,7 +247,7 @@ public:
         u8g2.print(text);
     }
 
-    void drawScrollingText(String text, int y, int xPos, uint16_t color) {
+    void drawScrollingText(const String& text, int y, int xPos, uint16_t color) {
         u8g2.setFontMode(1); 
         u8g2.setForegroundColor(color);
         u8g2.setCursor(xPos, y);
