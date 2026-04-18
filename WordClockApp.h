@@ -144,11 +144,15 @@ public:
         int m = lastKnownTime.tm_min;
         int mR = (m / 5) * 5; 
 
-        // --- NEU: Geräuschloses Aufholen der Zeit beim App-Wechsel ---
+// --- NEU: Geräuschloses Aufholen der Zeit beim App-Wechsel ---
         if (justActivated) {
             justActivated = false;
+            
+            // WICHTIG: IMMER den Text einmal mit Standardfarben (Gold/Silber) neu bauen!
+            // Das löscht eventuell hängengebliebene Grüntöne aus abgebrochenen Animationen.
+            updateClockText(h, m, "{c:#FFC800}", "{c:#AAAAAA}");
+            
             if (mR != lastCalculated_mR || firstRun) {
-                updateClockText(h, m, "{c:#FFC800}", "{c:#AAAAAA}");
                 lastCalculatedHour = h;
                 lastCalculatedMinute = m;
                 lastCalculated_mR = mR;

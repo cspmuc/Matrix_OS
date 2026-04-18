@@ -1,21 +1,21 @@
 #pragma once
 #include <WiFi.h>
-#include <ESPmDNS.h>      // <--- NEU: Die mDNS Bibliothek
+#include <ESPmDNS.h>      
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "config.h"
-#include "ConfigManager.h" // <--- NEU: Einbinden des ConfigManagers
+#include "ConfigManager.h" 
 #include "DisplayManager.h"
 #include "SensorApp.h" 
 #include <time.h> 
 #include <esp_heap_caps.h> 
-#include "WeatherApp.h" // <--- NEU: Damit der NetworkManager die App kennt!
+#include "WeatherApp.h" 
 
 extern void status(const String& msg, uint16_t color);
 extern void queueOverlay(String msg, int durationSec, String colorName, int scrollSpeed);
 extern void forceOverlay(String msg, int durationSec, String colorName);
-extern void queueAnimation(OverlayType animType, int durationSec); // <--- NEU
+extern void queueAnimation(OverlayType animType, int durationSec); 
 extern WeatherApp weatherApp;
 
 // Eigener Allocator für ArduinoJson, der den PSRAM zwingend nutzt
@@ -38,7 +38,7 @@ private:
     int& brightnessRef;
     DisplayManager& displayRef;
     SensorApp& sensorAppRef; 
-    ConfigManager& conf; // <--- NEU: Referenz auf unsere Konfiguration
+    ConfigManager& conf; 
 
     static MatrixNetworkManager* instance;
     
@@ -50,7 +50,7 @@ private:
     unsigned long lastWifiCheck = 0;
     unsigned long lastMqttRetry = 0;
     unsigned long lastTimeCheck = 0;
-    int lastSavedBrightness = 150; // <--- NEU: Gedächtnis für die letzte Helligkeit
+    int lastSavedBrightness = 150; 
 
     void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
         String t = String(topic);
@@ -63,11 +63,10 @@ private:
              for (int i = 0; i < length; i++) msg += (char)payload[i];
              if (t == "matrix/cmd/power") {
                 if (msg == "OFF") {
-                    if (brightnessRef > 0) lastSavedBrightness = brightnessRef; // <--- NEU: Helligkeit vor dem Ausschalten merken!
+                    if (brightnessRef > 0) lastSavedBrightness = brightnessRef; 
                     brightnessRef = 0;
                 }
                 else if (msg == "ON" && brightnessRef == 0) {
-                    // <--- NEU: Gemerkte Helligkeit wiederherstellen (Fallback auf Config-Startwert)
                     brightnessRef = (lastSavedBrightness > 0) ? lastSavedBrightness : conf.system.startup_brightness;
                 }
                 publishState();
@@ -78,7 +77,7 @@ private:
         
         if (t == "matrix/cmd/brightness" && doc->containsKey("val")) {
             brightnessRef = (*doc)["val"].as<int>();
-            if (brightnessRef > 0) lastSavedBrightness = brightnessRef; // <--- NEU: Auch wenn wir dimmen, merken wir uns den neuen Wert
+            if (brightnessRef > 0) lastSavedBrightness = brightnessRef; 
             publishState();
         }
 
@@ -89,11 +88,14 @@ private:
             else if (newApp == "testpattern") currentAppRef = TESTPATTERN;
             else if (newApp == "ticker") currentAppRef = TICKER;
             else if (newApp == "plasma") currentAppRef = PLASMA;
-            else if (newApp == "weather") currentAppRef = WEATHER; // <--- NEU
-            else if (newApp == "pong") currentAppRef = PONG;   // <--- ADD THIS
+            else if (newApp == "weather") currentAppRef = WEATHER; 
+            else if (newApp == "pong") currentAppRef = PONG;   
             else if (newApp == "off") currentAppRef = OFF;
-            else if (newApp == "auto") currentAppRef = AUTO; // <--- DIESE ZEILE HINZUFÜGEN!
+            else if (newApp == "auto") currentAppRef = AUTO; 
             publishState(); 
+            
+            // --- NEU: Overlay beim App-Wechsel (10 Sekunden) ---
+            queueOverlay("Modus: " + newApp, 10, "cyan", 30);
         }     
         if (t == "matrix/cmd/overlay") {
              String msg = (*doc)["msg"] | "";
@@ -112,20 +114,18 @@ private:
                  }
              }
         }
-        // --- NEU: Animations Command ---
         if (t == "matrix/cmd/animation" && doc->containsKey("anim")) {
             String anim = (*doc)["anim"];
-            int dur = (*doc)["duration"] | 3; // Standard: 3 Sekunden
+            int dur = (*doc)["duration"] | 3; 
             if (anim == "ghost_eyes") {
                 queueAnimation(OVL_ANIM_GHOST, dur);
             }
         }
-        // -------------------------------
         if (t == "matrix/cmd/sensor_page") {
             String id = (*doc)["id"] | "default";
             String title = (*doc)["title"] | "INFO";
             int ttl = (*doc)["ttl"] | 60; 
-            int prio = (*doc)["priority"] | 3; // <--- NEU: Prio auslesen (Standard: 3)
+            int prio = (*doc)["priority"] | 3; 
             
             std::vector<SensorItem> items;
             JsonArray jsonItems = (*doc)["items"].as<JsonArray>();
@@ -136,14 +136,11 @@ private:
                 si.color = item["color"] | "white";
                 items.push_back(si);
             }
-            // NEU: Prio Parameter übergeben
             if (!items.empty()) sensorAppRef.updatePage(id, title, ttl, prio, items);
         }
-        // --- NEU: Wetterdaten empfangen ---
         if (t == "matrix/data/weather") { 
             weatherApp.updateData(doc);
         }
-        // -----------------------------------
         delete doc;
     }
 
@@ -188,7 +185,6 @@ public:
              
              WiFi.mode(WIFI_STA);
              
-             // --- NEU: DHCP Hostname setzen (für den Router) ---
              WiFi.setHostname(conf.network.hostname.c_str()); 
              
              configureStaticIP();
@@ -207,7 +203,6 @@ public:
         if (!otaInitialized) {
             setupOTA();
             
-            // --- NEU: mDNS Responder starten ---
             if (MDNS.begin(conf.network.hostname.c_str())) {
                 Serial.print("mDNS responder started: ");
                 Serial.print(conf.network.hostname);
@@ -217,7 +212,6 @@ public:
             otaInitialized = true;
         }
         if (!timeInitialized) {
-            // NEU: Verwendet configTzTime für POSIX Strings anstatt configTime
             configTzTime(conf.time.timezone.c_str(), conf.time.ntp_server.c_str());
             timeInitialized = true; 
         }
@@ -253,9 +247,8 @@ public:
 
         ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
             int p = (progress / (total / 100));
-            static int lastP = -1; // <--- NEU: Merkt sich den letzten Prozentwert
+            static int lastP = -1; 
             
-            // Zeichnet nur neu, wenn sich die Prozentzahl wirklich geändert hat (1% Schritte)
             if (p != lastP) {
                 lastP = p;
                 displayRef.clear();
@@ -289,7 +282,7 @@ public:
         time_t now = time(nullptr);
         if (now > 1600000000) { 
             timeSynced = true;
-            queueOverlay("Time Synced", 3, "success", 0); 
+            // --- GEÄNDERT: Die Time-Synced-Meldung erscheint nun lautlos im Hintergrund ---
             Serial.println("Network: NTP Time Synchronized successfully.");
         }
     }
@@ -306,7 +299,6 @@ public:
                 mqttInitialized = false; 
                 WiFi.disconnect();
                 
-                // Beim Reconnect wieder Hostname und ggf. IP setzen
                 WiFi.setHostname(conf.network.hostname.c_str()); 
                 configureStaticIP(); 
                 WiFi.begin(conf.network.wifi_ssid.c_str(), conf.network.wifi_pass.c_str()); 
@@ -335,7 +327,7 @@ public:
                 if (serverReachable) {
                     if (client.connect(conf.network.hostname.c_str(), conf.mqtt.user.c_str(), conf.mqtt.pass.c_str(), "matrix/status", 0, true, "OFF")) {
                         client.subscribe("matrix/cmd/#");
-                        client.subscribe("matrix/data/#"); // <--- NEU: Jetzt lauscht er auch auf Wetterdaten!
+                        client.subscribe("matrix/data/#"); 
                         publishState();
                         Serial.println("MQTT: Connected");
                     }
@@ -361,9 +353,9 @@ public:
             case TESTPATTERN: appStr = "testpattern"; break;
             case TICKER:      appStr = "ticker"; break;
             case PLASMA:      appStr = "plasma"; break;
-            case WEATHER:     appStr = "weather"; break; // <--- NEU
-            case PONG:        appStr = "pong"; break;   // <--- ADD THIS
-            case AUTO:        appStr = "auto"; break; // <--- DIESE ZEILE HINZUFÜGEN
+            case WEATHER:     appStr = "weather"; break; 
+            case PONG:        appStr = "pong"; break;   
+            case AUTO:        appStr = "auto"; break; 
             default:          appStr = "off"; break;
         }
         client.publish("matrix/status/app", appStr.c_str(), true);
