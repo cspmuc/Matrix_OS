@@ -1,9 +1,18 @@
 #pragma once
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <vector> 
 #include "App.h"
 #include "WeatherRenderer.h"
 #include "RichText.h" 
+
+struct HourlyForecast {
+    String time;
+    String cond;
+    float temp;
+    int precipProb;
+    float precip; // <-- NEU: Hier speichern wir jetzt auch die Regenmenge
+};
 
 struct WeatherData {
     String condition = "unknown";
@@ -16,6 +25,8 @@ struct WeatherData {
     int windDir = 0;        
     float windGust = 0.0;   
     int precipProb = 0;     
+
+    std::vector<HourlyForecast> hourly; 
 };
 
 struct LocalSensorData {
@@ -66,7 +77,6 @@ public:
         lastInfoToggle = millis();
         currentMultiplier = 1.0;
         
-        // --- NEU: Animationen beim Start mischen ---
         renderer.shuffleAnimations();
     }
 
@@ -99,6 +109,21 @@ public:
                 forecasts[i].windDir = arr[i]["wind_dir"] | 0;
                 forecasts[i].windGust = arr[i]["wind_gust"] | 0.0;
                 forecasts[i].precipProb = arr[i]["precip_prob"] | 0;
+            }
+        }
+
+        // Parsen der stündlichen Daten
+        if (doc->containsKey("hourly") && (*doc)["hourly"].is<JsonArray>()) {
+            currentW.hourly.clear();
+            JsonArray arr = (*doc)["hourly"].as<JsonArray>();
+            for (int i = 0; i < arr.size(); i++) {
+                HourlyForecast hf;
+                hf.time = arr[i]["time_str"] | "--:--";
+                hf.cond = arr[i]["cond"] | "unknown";
+                hf.temp = arr[i]["temp"] | 0.0;
+                hf.precipProb = arr[i]["precip_prob"] | 0;
+                hf.precip = arr[i]["precip"] | 0.0; // <-- NEU: Menge einlesen
+                currentW.hourly.push_back(hf);
             }
         }
 
@@ -139,12 +164,11 @@ public:
                 lastInfoToggle = millis();
                 infoPage++;
                 
-                // --- NEU: Animationen beim Seitenwechsel neu mischen ---
                 renderer.shuffleAnimations();
                 
-                if (infoPage >= 4) {
+                if (infoPage >= 5) {
                     cycleComplete = true; 
-                    if (currentApp == AUTO) infoPage = 3; 
+                    if (currentApp == AUTO) infoPage = 4; 
                     else infoPage = 0; 
                 }
                 needsRedraw = true;
@@ -195,7 +219,53 @@ public:
         }
 
         // ==========================================
-        // SEITEN 2 bis 4: Die 3-Tages-Vorhersage
+        // SEITE 2: Stündliche Vorhersage (+2h, +4h, +8h)
+        // ==========================================
+        if (infoPage == 1) {
+            int colWidth = M_WIDTH / 3;
+            
+            // --- NEU: Dynamischer Toggle-Logik ---
+            // Wir berechnen die Zeit, die wir uns schon auf dieser Seite befinden
+            unsigned long timeOnPage = millis() - lastInfoToggle; 
+            // Alle 2000ms wechseln wir den Zustand (Modulo 2 gibt uns 0 oder 1)
+            bool showAmount = (timeOnPage / 2000) % 2 != 0; 
+
+            for (int i = 0; i < 3 && i < currentW.hourly.size(); i++) {
+                int cx = (i * colWidth) + (colWidth / 2);
+                
+                // 1. Uhrzeit (oben)
+                drawColRichText(display, cx, 11, "{c:#CCCCCC}" + currentW.hourly[i].time.substring(0, 5));
+                
+                // 2. Wetter-Icon (mittig)
+                int iconSize = 22; 
+                int iconX = cx - (iconSize / 2);
+                int iconY = 18;
+                renderer.drawWeatherIcon(display, iconX, iconY, iconSize, currentW.hourly[i].cond, currentFrame);
+                
+                // 3. Temperatur (darunter)
+                String tStr = "{c:#FFC800}" + String((int)round(currentW.hourly[i].temp)) + "C";
+                drawColRichText(display, cx, 50, tStr);
+                
+                // 4. Regeninfo (Ganz unten mit Toggle)
+                String pStr;
+                if (!showAmount) {
+                    // Zeige Wahrscheinlichkeit (z.B. "30%")
+                    pStr = "{c:#64C8FF}" + String(currentW.hourly[i].precipProb) + "%";
+                } else {
+                    // Zeige Menge (z.B. "1.2mm" oder "0mm")
+                    if (currentW.hourly[i].precip < 0.1) {
+                        pStr = "{c:#AAAAAA}0mm";
+                    } else {
+                        pStr = "{c:#AAAAAA}" + String(currentW.hourly[i].precip, 1) + "mm";
+                    }
+                }
+                drawColRichText(display, cx, 63, pStr);
+            }
+            return true;
+        }
+
+        // ==========================================
+        // SEITEN 3 bis 5: Die 3-Tages-Vorhersage
         // ==========================================
         int colWidth = M_WIDTH / 3; 
 
@@ -204,7 +274,7 @@ public:
             
             drawColRichText(display, cx, 11, "{c:#CCCCCC}" + forecasts[i].day);
 
-            if (infoPage == 3) {
+            if (infoPage == 4) {
                 // WIND
                 renderer.drawWindRose(display, cx, 28, 11, forecasts[i].windDir, currentFrame);
 
@@ -220,12 +290,12 @@ public:
                 int iconY = 16;
                 renderer.drawWeatherIcon(display, iconX, iconY, iconSize, forecasts[i].condition, currentFrame);
 
-                if (infoPage == 1) {
+                if (infoPage == 2) {
                     String minT = String((int)round(forecasts[i].temp));
                     String maxT = String((int)round(forecasts[i].tempMax));
                     String richTempStr = "{c:#64C8FF}" + minT + "{c:#888888}|{c:#FFC800}" + maxT;
                     drawColRichText(display, cx, 57, richTempStr);
-                } else if (infoPage == 2) {
+                } else if (infoPage == 3) {
                     String probStr = "{c:#64C8FF}" + String(forecasts[i].precipProb) + "%";
                     drawColRichText(display, cx, 51, probStr);
 
